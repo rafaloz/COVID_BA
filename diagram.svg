@@ -9,7 +9,7 @@
    id="svg1"
    xml:space="preserve"
    inkscape:version="1.3.2 (1:1.3.2+202311252150+091e20ef0f)"
-   sodipodi:docname="FIG2RESUMEN.svg"
+   sodipodi:docname="diagram.svg"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns:xlink="http://www.w3.org/1999/xlink"
@@ -24,15 +24,16 @@
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
      inkscape:document-units="mm"
-     inkscape:zoom="1.148989"
-     inkscape:cx="-120.97592"
-     inkscape:cy="47.86817"
+     inkscape:zoom="0.40622896"
+     inkscape:cx="476.33237"
+     inkscape:cy="-147.69996"
      inkscape:window-width="1920"
      inkscape:window-height="1016"
      inkscape:window-x="0"
      inkscape:window-y="0"
      inkscape:window-maximized="1"
-     inkscape:current-layer="layer1" /><defs
+     inkscape:current-layer="layer1"
+     inkscape:export-bgcolor="#ffffff00" /><defs
      id="defs1"><inkscape:path-effect
        effect="bspline"
        id="path-effect15"
@@ -5478,7 +5479,17 @@
        uniform="false" /></defs><g
      inkscape:label="Capa 1"
      inkscape:groupmode="layer"
-     id="layer1"><image
+     id="layer1"><rect
+       style="fill:#ffffff;fill-opacity:1;stroke:#005522;stroke-width:0;stroke-linecap:round;stroke-linejoin:bevel;paint-order:markers stroke fill;stroke-dasharray:none"
+       id="rect20"
+       width="208.76939"
+       height="86.426849"
+       x="1.9150596"
+       y="0.17090715"
+       ry="5.683908"
+       inkscape:export-filename="diagram.svg"
+       inkscape:export-xdpi="300"
+       inkscape:export-ydpi="300" /><image
        width="106.62708"
        height="118.79792"
        preserveAspectRatio="none"
@@ -5912,7 +5923,7 @@
        transform="matrix(1.6832182,0,0,1.6832182,14.556421,-7.8315417)"><tspan
          x="21.019835"
          y="9.2906399"
-         id="tspan2">Training dataset</tspan></text><path
+         id="tspan9">Training dataset</tspan></text><path
        style="fill:#000000;stroke:#000000;stroke-width:0.9;stroke-linecap:butt;stroke-linejoin:round;stroke-dasharray:none;marker-end:url(#marker48-8-5-0-1-4)"
        d="m 20.664528,110.12507 c 0,-1.1162 0,-2.2324 0,-3.3486"
        id="path93"
@@ -6446,7 +6457,7 @@
        transform="translate(0.24621861,-39.898497)"><tspan
          x="135.38527"
          y="77.502487"
-         id="tspan3">Real Age</tspan></text><text
+         id="tspan10">Real Age</tspan></text><text
        xml:space="preserve"
        style="font-size:2.38719px;font-family:sans-serif;-inkscape-font-specification:sans-serif;text-align:center;text-anchor:middle;white-space:pre;inline-size:65.8278;display:inline;fill:#000000;fill-opacity:1;stroke:#010000;stroke-width:0;stroke-linecap:butt;stroke-linejoin:round;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"
        x="135.38527"
@@ -6455,7 +6466,7 @@
        transform="translate(-37.516314,-39.497624)"><tspan
          x="135.38527"
          y="77.502487"
-         id="tspan4">Real Age</tspan></text><text
+         id="tspan11">Real Age</tspan></text><text
        xml:space="preserve"
        style="font-size:2.38719px;font-family:sans-serif;-inkscape-font-specification:sans-serif;text-align:center;text-anchor:middle;white-space:pre;inline-size:65.8278;display:inline;fill:#000000;fill-opacity:1;stroke:#010000;stroke-width:0;stroke-linecap:butt;stroke-linejoin:round;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"
        x="135.38527"
@@ -6464,7 +6475,7 @@
        transform="rotate(-90,102.26525,56.814532)"><tspan
          x="135.38527"
          y="77.502487"
-         id="tspan5">Predicted Age</tspan></text><text
+         id="tspan12">Predicted Age</tspan></text><text
        xml:space="preserve"
        style="font-size:2.38719px;font-family:sans-serif;-inkscape-font-specification:sans-serif;text-align:center;text-anchor:middle;white-space:pre;inline-size:65.8278;display:inline;fill:#000000;fill-opacity:1;stroke:#010000;stroke-width:0;stroke-linecap:butt;stroke-linejoin:round;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"
        x="135.38527"
@@ -6473,7 +6484,7 @@
        transform="rotate(-90,83.590101,75.447032)"><tspan
          x="135.38527"
          y="77.502487"
-         id="tspan6">Predicted Age</tspan></text><path
+         id="tspan13">Predicted Age</tspan></text><path
        style="fill:#d35f5f;fill-opacity:1;stroke:#000000;stroke-width:0.272;stroke-linecap:butt;stroke-linejoin:round;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1"
        d="m 88.922623,51.182881 c 0,7.697626 0,15.395252 0,23.092878"
        id="path52-1"
@@ -7014,11 +7025,11 @@
        transform="translate(-0.93944339,-37.048151)"><tspan
          x="142.42328"
          y="66.643272"
-         id="tspan7">Decelerated 
+         id="tspan14">Decelerated 
 </tspan><tspan
          x="142.42328"
          y="68.173498"
-         id="tspan8">aging</tspan></text><g
+         id="tspan15">aging</tspan></text><g
        id="PolyCollection_1"
        transform="matrix(0.07648164,0,0,0.06747063,160.34887,9.134583)"
        style="stroke-linecap:butt;stroke-linejoin:round"><defs
