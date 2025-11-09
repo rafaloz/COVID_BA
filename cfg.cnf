@@ -1,0 +1,5 @@
+[DATOS]
+carpeta_datos = /home/rafa/PycharmProjects/COVID_V2/datos
+
+[MODELOS]
+carpeta_modelos = /home/rafa/PycharmProjects/COVID_V2/modelos_no_controles_LPI
