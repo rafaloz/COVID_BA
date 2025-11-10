@@ -1,56 +1,64 @@
-import matplotlib.pyplot as plt
-from utils_Harmonization import *
 from utils_Train import *
-from scipy.stats import pearsonr
-
-import numpy as np
 import pandas as pd
 
-from sklearn.metrics import mean_absolute_error, r2_score
-from sklearn.linear_model import LinearRegression
+# ---------- Paths ----------
+TRAIN_PATH        = '.../datos_morfo_Harmo_18_94_FF_noEB_2_TRAIN.csv'
+AGERISK_PATH      = '.../AgeRisk_noHarmo_18_94_FF_noEB_2.csv'
+CONTROLS_PATH    = '.../Controls_COVID.csv'
+COVID_I_PATH      = '.../LPI_COVID_I_FastSurfer_V2_data.csv'
+COVID_II_PATH     = '.../LPI_COVID_II_FastSurfer_V2_data.csv'
 
-from scipy import stats
+AGERISK_OUT_PATH  = '.../AgeRisk_harmo_18_94_FF_noEB_2.csv'
+CONTROLS_OUT_PATH= '.../Controls_harmo_18_94_FF_noEB_2.csv'
+COVID_I_OUT_PATH  = '.../COVID_I_harmo_18_94_FF_noEB_2.csv'
+COVID_II_OUT_PATH = '.../COVID_II_harmo_18_94_FF_noEB_2.csv'
 
-X_train = pd.read_csv('/datos/work/rnavgon/ComBatGAM/DatosCOVID/datos_morfo_Harmo_18_94_FF_noEB_2_TRAIN.csv')
-X_test_OutSample = pd.read_csv('/datos/work/rnavgon/ComBatGAM/Models/ModeloCovid/AgeRisk_noHarmo_18_94_FF_noEB_2.csv')
+# ---------- Tags / Names ----------
+TAG_TRAIN_SCANNER   = 'zarmonitation_1'          # Ensures reference is 1
+TAG_FILTER_SCANNER  = 'zarmonization_1'
+ARMO_TAG_AGERISK    = 'Armo_AgeRisk_COVID_18_94_FF_noEB_2'
+ARMO_TAG_COVID      = 'Armo_COVID_18_94_FF_noEB_2'
+COMBATGAM_DIR       = '.../work/'
 
-Controles = pd.read_csv('/datos/work/rnavgon/ComBatGAM/DatosCOVID/Controles_COVID.csv')
-COVID_I = pd.read_csv('/datos/work/rnavgon/ComBatGAM/DatosCOVID/LPI_COVID_I_FastSurfer_V2_data.csv')
-COVID_II = pd.read_csv('/datos/work/rnavgon/ComBatGAM/DatosCOVID/LPI_COVID_II_FastSurfer_V2_data.csv')
+# ---------- Load ----------
+X_train          = pd.read_csv(TRAIN_PATH)
+X_test_OutSample = pd.read_csv(AGERISK_PATH)
+Controls        = pd.read_csv(CONTROLS_PATH)
+COVID_I          = pd.read_csv(COVID_I_PATH)
+COVID_II         = pd.read_csv(COVID_II_PATH)
 
-features_to_armo = X_train.columns.tolist()
+# ---------- Features ----------
+features_to_harmo = X_train.columns.tolist()
+print(features_to_harmo)
+print(X_train.shape)
 
-print(features_to_armo)
+if 'eTIV' in features_to_harmo:
+    print('eTIV in the dataset')
 
 print(X_train.shape)
 
-if 'eTIV' in features_to_armo:
-    print('eTIV dentro')
+# ---------- Reference tag ----------
+X_train['Escaner'] = TAG_TRAIN_SCANNER  # Ensures reference is 1
 
-print(X_train.shape)
+# ---------- Align columns ----------
+X_test_OutSample = X_test_OutSample[features_to_harmo]
+Controls        = Controls[features_to_harmo]
+COVID_I          = COVID_I[features_to_harmo]
+COVID_II         = COVID_II[features_to_harmo]
 
-X_train['Escaner'] = 'zarmonitation_1'
+# ---------- Harmonize AgeRisk ----------
+datos_armo, my_model = learn_harmonization(X_train, X_test_OutSample, ARMO_TAG_AGERISK)
+AgeRisk_harmo = datos_armo[datos_armo['Escaner'] != TAG_FILTER_SCANNER]
+AgeRisk_harmo.to_csv(AGERISK_OUT_PATH, index=False)
 
-X_test_OutSample = X_test_OutSample[features_to_armo]
-Controles = Controles[features_to_armo]
-COVID_I = COVID_I[features_to_armo]
-COVID_II = COVID_II[features_to_armo]    
+# ---------- Harmonize COVID (using Controls as healthy set) ----------
+datos_armo, my_model = learn_harmonization(X_train, Controls, ARMO_TAG_COVID)
+Controls_harmo = datos_armo[datos_armo['Escaner'] != TAG_FILTER_SCANNER]
 
-# Armonizo datos AgeRisk
-datos_armo, my_model = learn_harmonization(X_train, X_test_OutSample, 'Armo_AgeRisk_COVID_18_94_FF_noEB_2')
-AgeRisk_harmo = datos_armo[datos_armo['Escaner'] != 'zarmonization_1']
-AgeRisk_harmo.to_csv('/datos/work/rnavgon/ComBatGAM/DatosCOVID/AgeRisk_harmo_18_94_FF_noEB_2.csv', index=False)
+COVID_I_harmo  = apply_harmonization(COVID_I,  X_train, 1, COMBATGAM_DIR, ARMO_TAG_COVID)
+COVID_II_harmo = apply_harmonization(COVID_II, X_train, 1, COMBATGAM_DIR, ARMO_TAG_COVID)
 
-# Armonizo datos Cardiff_I
-
-datos_armo, my_model = learn_harmonization(X_train, Controles, 'Armo_COVID_18_94_FF_noEB_2')
-Controles_harmo = datos_armo[datos_armo['Escaner'] != 'zarmonization_1']
-COVID_I_harmo = apply_harmonization(COVID_I, X_train, 1, '/datos/work/rnavgon/ComBatGAM', 'Armo_COVID_18_94_FF_noEB_2')
-COVID_II_harmo = apply_harmonization(COVID_II, X_train, 1, '/datos/work/rnavgon/ComBatGAM', 'Armo_COVID_18_94_FF_noEB_2')
-
-Controles_harmo.to_csv('/datos/work/rnavgon/ComBatGAM/DatosCOVID/Controles_harmo_18_94_FF_noEB_2.csv', index=False)
-COVID_I_harmo.to_csv('/datos/work/rnavgon/ComBatGAM/DatosCOVID/COVID_I_harmo_18_94_FF_noEB_2.csv', index=False)
-COVID_II_harmo.to_csv('/datos/work/rnavgon/ComBatGAM/DatosCOVID/COVID_II_harmo_18_94_FF_noEB_2.csv', index=False)
-
-print('pausa')
-
+# ---------- Save ----------
+Controls_harmo.to_csv(CONTROLS_OUT_PATH, index=False)
+COVID_I_harmo.to_csv(COVID_I_OUT_PATH, index=False)
+COVID_II_harmo.to_csv(COVID_II_OUT_PATH, index=False)
