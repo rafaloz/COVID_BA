@@ -554,6 +554,7 @@ plot_brain_age_vs_age(df)
 
 # IDs baseline que tienen segunda adquisición
 ids_long = (pac_COVID_II_results["ID"].astype(str).str.extract(r"^(\d+)").squeeze().dropna().astype(int).tolist())
+ids_long = [str(x) for x in ids_long]
 
 # Filtra pac_COVID_results in-place (o crea una copia si prefieres)
 pac_COVID_results = (pac_COVID_results[pac_COVID_results['ID'].isin(ids_long)].reset_index(drop=True))
