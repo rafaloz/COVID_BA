@@ -30,229 +30,6 @@ try:
 except Exception:
     SCIPY = False
 
-
-def risk_summary_rr(df, bag_col='BrainPAD_c_t1', group_col='Grupo',
-                    improve_label='Mejora', not_improve_label='No mejora',
-                    bag_thr=0.0):
-    d = df[[bag_col, group_col]].dropna().copy()
-    d['BAGpos'] = (d[bag_col] > bag_thr).astype(int)
-    d['NoMej']  = (d[group_col] == not_improve_label).astype(int)
-
-    # Counts for 2x2
-    # a = NoMej & BAGpos=1 ; b = Mejora & BAGpos=1 ; c = NoMej & BAGpos=0 ; d_ = Mejora & BAGpos=0
-    a = int(((d['BAGpos']==1) & (d['NoMej']==1)).sum())
-    b = int(((d['BAGpos']==1) & (d['NoMej']==0)).sum())
-    c = int(((d['BAGpos']==0) & (d['NoMej']==1)).sum())
-    d_ = int(((d['BAGpos']==0) & (d['NoMej']==0)).sum())
-
-    # Risks and RR (add 0.5 if any zero cells to avoid infinities)
-    a_, b_, c_, d__ = a, b, c, d_
-    if 0 in [a,b,c,d_]:
-        a_, b_, c_, d__ = a+0.5, b+0.5, c+0.5, d_+0.5
-
-    risk_pos = a_ / (a_ + b_)
-    risk_neg = c_ / (c_ + d__)
-    RR = risk_pos / risk_neg
-
-    # Katz 95% CI on log scale
-    se_log_rr = np.sqrt((1/a_) - (1/(a_+b_)) + (1/c_) - (1/(c_+d__)))
-    lo, hi = np.exp(np.log(RR) - 1.96*se_log_rr), np.exp(np.log(RR) + 1.96*se_log_rr)
-
-    # Fisher's exact test (also gives OR). We report its p-value as a quick significance test.
-    table = np.array([[a, b],
-                      [c, d_]], dtype=int)
-    OR_fisher, p_fisher =  stats.fisher_exact(table, alternative='two-sided')
-
-    # Poisson GLM with robust SE to estimate RR (unadjusted; extend formula to adjust)
-    glm = smf.glm('NoMej ~ BAGpos', data=d, family=sm.families.Poisson()).fit(cov_type='HC3')
-    rr_glm = float(np.exp(glm.params['BAGpos']))
-    ci_glm = np.exp(glm.conf_int().loc['BAGpos'].to_numpy())
-    p_glm  = float(glm.pvalues['BAGpos'])
-
-    # Nicely print
-    n_pos = int((d['BAGpos']==1).sum()); n_neg = int((d['BAGpos']==0).sum())
-    print("\n========== Risk of NOT improving by baseline BAG sign ==========")
-    print(f"BAG threshold: > {bag_thr:.1f} years considered 'positive'")
-    print(f"2×2 (rows=BAGpos [1/0], cols=No mejora [1] / Mejora [0]):")
-    print(pd.DataFrame([[a, b],[c, d_]], index=['BAG>thr','BAG≤thr'], columns=['No mejora','Mejora']))
-    print(f"\nAbsolute risks:  BAG>thr: {risk_pos:.3f} (n={n_pos})  |  BAG≤thr: {risk_neg:.3f} (n={n_neg})")
-    print(f"Relative Risk (Katz): RR={RR:.2f}  95% CI [{lo:.2f}, {hi:.2f}]  |  Fisher p={p_fisher:.4g}")
-    print(f"Poisson GLM (robust) RR={rr_glm:.2f}  95% CI [{ci_glm[0]:.2f}, {ci_glm[1]:.2f}]  p={p_glm:.4g}")
-
-    # One-liner suitable for an abstract:
-    delta_pct = (RR-1.0)*100
-    print("\nAbstract line:")
-    print(f"Participants with baseline BAG>{bag_thr:.0f} had a {delta_pct:+.0f}% higher risk of not improving "
-          f"(RR={RR:.2f}, 95%CI {lo:.2f}–{hi:.2f}; Fisher p={p_fisher:.3g}; n={len(d)}).")
-
-    return {
-        "table": table, "risk_pos": risk_pos, "risk_neg": risk_neg,
-        "RR": RR, "RR_CI": (lo, hi), "Fisher_p": float(p_fisher),
-        "RR_glm": rr_glm, "RR_glm_CI": (float(ci_glm[0]), float(ci_glm[1])), "RR_glm_p": p_glm,
-        "n_total": int(len(d)), "n_BAGpos": n_pos, "n_BAGneg": n_neg
-    }
-
-
-def analyze_bag_vs_freq(freq_cef, wide,
-                        use_improve_col=True,
-                        mcid_abs=0,
-                        mcid_pct=None,
-                        save_prefix=None
-                       ):
-    """
-    Requiere en:
-      - freq_cef: columnas ['ID','freq_cef_basal','freq_cef_long','Improve'] (Improve=1 mejora; 0 no)
-      - wide: columnas ['base_id','BrainPAD_c_t1','BrainPAD_c_t2']
-
-    Pasos:
-      1) Merge por ID/base_id (normalizando a mayúsculas)
-      2) Calcular ΔBAG y Δfrecuencia
-      3) Definir grupo Mejora/No mejora (columna Improve o por umbral MCID)
-      4) Spaghetti plot de BAG por grupo
-      5) Dispersograma Δfreq vs ΔBAG + correlaciones
-      6) Resumen y test de diferencias en ΔBAG entre grupos
-      7) (Nuevo) Resumen de BAG (media y sd) en T1 y T2 por grupo
-    """
-    # --- Preparación / limpieza ---
-    fc = freq_cef.copy()
-    wd = wide.copy()
-
-    # Asegurar tipos numéricos
-    for c in ['freq_cef_basal','freq_cef_long','Improve']:
-        if c in fc.columns:
-            fc[c] = pd.to_numeric(fc[c], errors='coerce')
-    for c in ['BrainPAD_c_t1','BrainPAD_c_t2']:
-        wd[c] = pd.to_numeric(wd[c], errors='coerce')
-
-    # Claves para merge
-    fc['ID_UP'] = fc['ID'].astype(str).str.upper()
-    wd['BASE_UP'] = wd['base_id'].astype(str).str.upper()
-
-    # Merge solo sujetos presentes en ambos
-    df = pd.merge(wd, fc, left_on='BASE_UP', right_on='ID_UP', how='inner')
-
-    # --- Cambios ---
-    df['dBAG']  = df['BrainPAD_c_t2'] - df['BrainPAD_c_t1']
-    df['dFreq'] = df['freq_cef_long'] - df['freq_cef_basal']
-    df['dFreq_pct'] = 100.0 * df['dFreq'] / df['freq_cef_basal']
-
-    # --- Grupo Mejora / No mejora ---
-    if use_improve_col and 'Improve' in df.columns and df['Improve'].notna().any():
-        df['Grupo'] = np.where(df['Improve'] == 1, 'Mejora', 'No mejora')
-        fuente_grupo = "columna 'Improve'"
-    else:
-        if mcid_pct is not None:
-            df['Grupo'] = np.where(df['dFreq_pct'] <= mcid_pct, 'Mejora', 'No mejora')
-            fuente_grupo = f"umbral porcentual dFreq_pct ≤ {mcid_pct}%"
-        else:
-            df['Grupo'] = np.where(df['dFreq'] <= -abs(mcid_abs), 'Mejora', 'No mejora')
-            fuente_grupo = f"umbral absoluto dFreq ≤ {-abs(mcid_abs)}"
-
-    # --- Chequeo de consistencia (opcional, solo imprime) ---
-    if 'Improve' in df.columns and df['Improve'].notna().any():
-        neg = (df['dFreq'] < 0).astype(int)
-        agree = (neg == df['Improve']).mean()
-        print(f"[Info] Acuerdo entre (dFreq<0) e Improve: {agree*100:.1f}% (n={len(df)})")
-
-    # --- Tabla resumen por grupo (Δ) ---
-    summary = (df.groupby('Grupo')[['dBAG','dFreq','dFreq_pct']]
-                 .agg(['count','mean','std']))
-    print("\nResumen por grupo (Δ):\n", summary)
-
-    # --- NUEVO: BAG medio y sd en T1 y T2 por grupo ---
-    bag_levels = (df.groupby('Grupo')
-                    .agg(n=('BASE_UP','size'),
-                         BAG_T1_mean=('BrainPAD_c_t1','mean'),
-                         BAG_T1_sd=('BrainPAD_c_t1','std'),
-                         BAG_T2_mean=('BrainPAD_c_t2','mean'),
-                         BAG_T2_sd=('BrainPAD_c_t2','std')))
-    print("\nBAG por grupo (niveles, no Δ):\n", bag_levels.round(3))
-
-    # --- Spaghetti plot (BAG T1/T2) por grupo ---
-    long_rows = []
-    for _, r in df.iterrows():
-        long_rows.append({'ID': r['BASE_UP'], 'tp': 'T1', 'BAG': r['BrainPAD_c_t1'], 'Grupo': r['Grupo']})
-        long_rows.append({'ID': r['BASE_UP'], 'tp': 'T2', 'BAG': r['BrainPAD_c_t2'], 'Grupo': r['Grupo']})
-    long_df = pd.DataFrame(long_rows)
-
-    fig, ax = plt.subplots(figsize=(7,5))
-    for gname, gdf in long_df.groupby('Grupo'):
-        # Líneas por sujeto
-        for sid, sdf in gdf.groupby('ID'):
-            sdf = sdf.sort_values('tp')
-            ax.plot([1,2], sdf['BAG'].values, alpha=0.25)
-        # Media por tiempo (línea gruesa)
-        means = gdf.groupby('tp')['BAG'].mean().reindex(['T1','T2'])
-        ax.plot([1,2], means.values, marker='o', linewidth=3, label=gname)
-    ax.set_xticks([1,2])
-    ax.set_xticklabels(['T1','T2'])
-    ax.set_xlabel('Timepoint')
-    ax.set_ylabel('Brain age gap (corrected)')
-    ax.set_title(f'Spaghetti BAG por grupo de cambio clínico ({fuente_grupo})')
-    ax.legend(title='Grupo', frameon=False)
-    plt.tight_layout()
-    if save_prefix:
-        plt.savefig(f"{save_prefix}_spaghetti.png", dpi=200, bbox_inches='tight')
-    plt.show()
-
-    # --- Dispersograma Δfreq vs ΔBAG ---
-    fig, ax = plt.subplots(figsize=(6,5))
-    ax.scatter(df['dFreq'], df['dBAG'], alpha=0.8)
-    ax.axhline(0, linestyle='--', linewidth=1)
-    ax.axvline(0, linestyle='--', linewidth=1)
-    ax.set_xlabel('Δ Frecuencia cefalea (T2 - T1)')
-    ax.set_ylabel('Δ Brain age gap (T2 - T1)')
-    ax.set_title('Relación ΔBAG vs ΔFrecuencia')
-
-    # Recta de regresión simple
-    if df[['dFreq','dBAG']].dropna().shape[0] >= 2:
-        x = df['dFreq'].values
-        y = df['dBAG'].values
-        mask = np.isfinite(x) & np.isfinite(y)
-        if mask.sum() >= 2:
-            b1, b0 = np.polyfit(x[mask], y[mask], 1)  # y ≈ b1*x + b0
-            xs = np.linspace(x[mask].min(), x[mask].max(), 100)
-            ax.plot(xs, b1*xs + b0, linewidth=2)
-
-    # Correlaciones
-    if SCIPY and df[['dFreq','dBAG']].dropna().shape[0] >= 3:
-        pear = stats.pearsonr(df['dFreq'], df['dBAG'])
-        spear = stats.spearmanr(df['dFreq'], df['dBAG'])
-        txt = f"Pearson r={pear.statistic:.2f} (p={pear.pvalue:.3f})\nSpearman ρ={spear.correlation:.2f} (p={spear.pvalue:.3f})"
-        ax.text(0.02, 0.98, txt, transform=ax.transAxes, va='top', ha='left')
-    plt.tight_layout()
-    if save_prefix:
-        plt.savefig(f"{save_prefix}_scatter.png", dpi=200, bbox_inches='tight')
-    plt.show()
-
-    # --- Test de diferencias de ΔBAG entre grupos ---
-    g = dict(tuple(df.groupby('Grupo')))
-    if set(g.keys()) >= {'Mejora','No mejora'}:
-        x = g['Mejora']['dBAG'].dropna().values
-        y = g['No mejora']['dBAG'].dropna().values
-
-        def hedges_g(a, b):
-            na, nb = len(a), len(b)
-            sa2, sb2 = a.var(ddof=1), b.var(ddof=1)
-            sp = np.sqrt(((na-1)*sa2 + (nb-1)*sb2) / (na+nb-2))
-            d = (a.mean() - b.mean()) / sp if sp > 0 else np.nan
-            J = 1 - (3/(4*(na+nb)-9))  # corrección de Hedges
-            return d*J
-
-        print("\nComparación ΔBAG (Mejora vs No mejora):")
-        print(f"  n Mejora = {len(x)}, mean = {np.mean(x):.2f}, sd = {np.std(x, ddof=1):.2f}")
-        print(f"  n NoMej  = {len(y)}, mean = {np.mean(y):.2f}, sd = {np.std(y, ddof=1):.2f}")
-        print(f"  Hedges' g = {hedges_g(x,y):.2f}")
-
-        if SCIPY and len(x) >= 2 and len(y) >= 2:
-            ttest = stats.ttest_ind(x, y, equal_var=False)  # Welch
-            mw = stats.mannwhitneyu(x, y, alternative='two-sided')
-            print(f"  Welch t-test: t={ttest.statistic:.2f}, p={ttest.pvalue:.3f}")
-            print(f"  Mann–Whitney U: U={mw.statistic:.0f}, p={mw.pvalue:.3f}")
-
-    # Devuelve el dataframe fusionado
-    return df
-
 # Function to update BrainPAD
 def update_prededad(results_df, predictions_df,
                     id_col_results='ID', id_col_pred='id',
@@ -263,6 +40,9 @@ def update_prededad(results_df, predictions_df,
     # Normaliza tipos/espacios por si acaso
     r[id_col_results] = r[id_col_results].astype(str).str.strip()
     p[id_col_pred]    = p[id_col_pred].astype(str).str.strip()
+
+    if len(p[id_col_pred][0]) == 3 and p[id_col_pred][0][2] == '0':
+        p[id_col_pred] = pd.to_numeric(p[id_col_pred], errors='coerce').dropna().astype('int64').tolist()
 
     # Si hay IDs duplicados en las predicciones, quédate con el último (o la media)
     p = p.drop_duplicates(subset=[id_col_pred], keep='last')
@@ -280,137 +60,6 @@ def update_prededad(results_df, predictions_df,
     print(f'IDs sin predicción: {len(missing)}')
 
     return r
-
-def plot_bag_age_side_by_side(
-    df: pd.DataFrame,
-    age_col: str = "Edad",
-    bag_before_col: str = "BAG",
-    bag_after_col: str = "BAG_corr",
-    figsize=(10, 5),
-    dpi=300,
-    outfile: str | None = None,
-    annotate: bool = True,
-    symmetric_ylim: bool = True,
-):
-    """
-    Create side-by-side plots of BAG vs Age (before vs after correction),
-    print correlations/slopes, and return (fig, axes, stats).
-
-    Parameters
-    ----------
-    df : DataFrame with columns [age_col, bag_before_col, bag_after_col]
-    age_col : name of age column (default "Edad")
-    bag_before_col : BAG (uncorrected) column (default "BAG")
-    bag_after_col : BAG (corrected) column (default "BAG_corr")
-    figsize, dpi : figure size and DPI
-    outfile : optional path to save the figure (PNG/PDF, etc.)
-    annotate : whether to draw a small stats box in each subplot
-    symmetric_ylim : if True, uses symmetric y-limits around 0 across both panels
-
-    Returns
-    -------
-    fig, axes, stats_dict
-      stats_dict = {"before": {...}, "after": {...}}
-    """
-
-    # --- helper to compute stats and model ---
-    def _fit_and_stats(d: pd.DataFrame, y_col: str):
-        d = d[[age_col, y_col]].dropna().copy()
-        if d.empty:
-            raise ValueError(f"No data after dropping NaNs for {age_col} & {y_col}.")
-        X = sm.add_constant(d[age_col])
-        model = sm.OLS(d[y_col], X).fit()
-        slope = float(model.params[age_col])
-        p_slope = float(model.pvalues[age_col])
-
-        # Correlations
-        r, p_r = stats.pearsonr(d[y_col], d[age_col])
-        rho, p_rho = stats.spearmanr(d[y_col], d[age_col])
-
-        stats_out = {
-            "n": int(len(d)),
-            "Pearson_r": float(r),
-        }
-        return d, model, stats_out
-
-    # --- fit both ---
-    d_before, m_before, s_before = _fit_and_stats(df, bag_before_col)
-    d_after,  m_after,  s_after  = _fit_and_stats(df, bag_after_col)
-
-    # Print the correlations/slopes
-    def _fmt(s):
-        return (f"n={s['n']}, "
-                f"Pearson r={s['Pearson_r']:.2f}")
-
-    print("BEFORE (BAG ~ age): " + _fmt(s_before))
-    print("AFTER  (BAG ~ age): " + _fmt(s_after))
-
-    # Shared x-range for smoother lines
-    xmin = float(min(d_before[age_col].min(), d_after[age_col].min()))
-    xmax = float(max(d_before[age_col].max(), d_after[age_col].max()))
-    xs = np.linspace(xmin, xmax, 200)
-    Xgrid = sm.add_constant(pd.Series(xs, name=age_col))
-
-    y_before_line = m_before.predict(Xgrid)
-    y_after_line  = m_after.predict(Xgrid)
-
-    # Shared symmetric y-limits (optional)
-    if symmetric_ylim:
-        yabs = max(
-            np.abs(d_before[bag_before_col]).max(),
-            np.abs(d_after[bag_after_col]).max(),
-            np.abs(y_before_line).max(),
-            np.abs(y_after_line).max(),
-        )
-        ylim = (-1.05 * yabs, 1.05 * yabs)
-    else:
-        ylim = None
-
-    # --- plotting ---
-    fig, axes = plt.subplots(1, 2, figsize=figsize, dpi=dpi, sharex=True, sharey=True)
-
-    # BEFORE
-    ax = axes[0]
-    ax.scatter(d_before[age_col], d_before[bag_before_col], s=18, alpha=0.75)
-    ax.plot(xs, y_before_line, linewidth=2)
-    ax.axhline(0, linestyle="--", linewidth=1)
-    ax.set_title("Brain Age Gap vs Age — Before correction")
-    ax.set_xlabel("Age")
-    ax.set_ylabel("Brain Age Gap")
-    if ylim: ax.set_ylim(*ylim)
-    ax.set_xlim(xmin, xmax)
-    if annotate:
-        txt = (f"n={s_before['n']}\n"
-               f"Pearson r={s_before['Pearson_r']:.2f}\n")
-        ax.text(0.02, 0.98, txt, transform=ax.transAxes, va="top", ha="left",
-                fontsize=9, bbox=dict(boxstyle="round,pad=0.3", alpha=0.15))
-    ax.grid(True, alpha=0.25)
-
-    # AFTER
-    ax = axes[1]
-    ax.scatter(d_after[age_col], d_after[bag_after_col], s=18, alpha=0.75)
-    ax.plot(xs, y_after_line, linewidth=2)
-    ax.axhline(0, linestyle="--", linewidth=1)
-    ax.set_title("Brain Age Gap vs Age — After correction")
-    ax.set_xlabel("Age")
-    if ylim: ax.set_ylim(*ylim)
-    ax.set_xlim(xmin, xmax)
-    if annotate:
-        txt = (f"n={s_after['n']}\n"
-               f"Pearson r={s_after['Pearson_r']:.2f}\n")
-        ax.text(0.02, 0.98, txt, transform=ax.transAxes, va="top", ha="left",
-                fontsize=9, bbox=dict(boxstyle="round,pad=0.3", alpha=0.15))
-    ax.grid(True, alpha=0.25)
-
-    plt.tight_layout()
-    if outfile:
-        plt.savefig(outfile, bbox_inches="tight")
-    plt.show()
-
-    stats_dict = {"before": s_before, "after": s_after}
-    return fig, axes, stats_dict
-
-
 
 def raincloud_plot(
     data_list, labels, width=0.35, jitter=0.06, bandwidth='scott',
@@ -601,96 +250,13 @@ def plot_pred_vs_age_two_groups(
 # --- 1) Emparejar por sujeto (base_id = ccovN) ---
 def add_base_id(df):
     out = df.copy()
-    out['base_id'] = out['ID'].str.extract(r'(ccov\d+)', expand=False)
+    out['base_id'] = np.char.partition(out['ID'].to_numpy(dtype='U', na_value=''), '_')[:, 0]
     return out
 
-def _parse_ids(df, id_col='ID'):
-    out = df.copy()
-    # fecha = primeros 8 dígitos (YYYYMMDD) que aparezcan en el ID
-    out['fecha'] = pd.to_datetime(out[id_col].str.extract(r'(\d{8})')[0],
-                                  format='%Y%m%d', errors='coerce')
-    # base_id = ccov + número (sirve para emparejar adquisiciones del mismo sujeto)
-    out['base_id'] = out[id_col].str.extract(r'(ccov\d+)')[0]
-    # ola = 2/3 si termina en _2/_3; si no, 1 (primera adquisición)
-    ola = out[id_col].str.extract(r'_(\d+)$')[0].astype('float')
-    out['ola'] = ola.fillna(1).astype(int)
-    return out
 
-def emparejar_y_delta(df_base, df_follow, id_col='ID'):
-    b = _parse_ids(df_base, id_col)
-    f = _parse_ids(df_follow, id_col)
+def model_evaluation_clean(X_test, results):
 
-    # Nos quedamos con baseline (ola==1) y segunda adquisición (ola==2)
-    b = b[(b['ola'] == 1) & b['base_id'].notna() & b['fecha'].notna()]
-    f = f[(f['ola'] == 2) & f['base_id'].notna() & f['fecha'].notna()]
-
-    # Si hubiese duplicados por sujeto, cogemos la más temprana en cada ola
-    b = b.sort_values('fecha').drop_duplicates('base_id', keep='first')
-    f = f.sort_values('fecha').drop_duplicates('base_id', keep='first')
-
-    # Emparejar por sujeto (base_id) y calcular diferencias
-    pares = (b[['base_id', id_col, 'fecha']]
-             .merge(f[['base_id', id_col, 'fecha']],
-                    on='base_id', suffixes=('_t1', '_t2'), how='inner'))
-
-    pares['delta_dias']  = (pares['fecha_t2'] - pares['fecha_t1']).dt.days
-    pares['delta_anos']  = pares['delta_dias'] / 365.25
-    return pares.sort_values('base_id').reset_index(drop=True)
-
-def figura_edad_y_edad_predicha(edades_test, pred_test):
-
-    # calculo MAE, MAPE y r test
-    MAE_biased_test = mean_absolute_error(edades_test, pred_test)
-    r_squared = r2_score(edades_test, pred_test)
-    r_biased_test = stats.pearsonr(edades_test, pred_test)[0]
-
-    # Figura concordancia entre predichas y reales con reg lineal
-    plt.figure(figsize=(8, 8))
-    plt.scatter(edades_test, pred_test, color='blue', label='Predictions')
-    plt.plot([10, 100], [10, 100], 'k--', lw=2, label='Ideal Fit')
-    plt.xlabel('Real Age')
-    plt.ylabel('Predicted Age')
-    plt.title('Predicted Age vs. Real Age')
-
-    # Set x and y axis limits
-    plt.xlim(0, 105)
-    plt.ylim(0, 105)
-
-    # Ensure x and y axes have the same scale
-    plt.gca().set_aspect('equal', adjustable='box')
-
-    # Annotate MAE, Pearson correlation r, and R² in the plot
-    textstr = '\n'.join((
-        f'MAE: {MAE_biased_test:.2f}',
-        f'Pearson r: {r_biased_test:.2f}',
-        f'R²: {r_squared:.2f}'))
-    plt.text(0.05, 0.95, textstr, transform=plt.gca().transAxes, fontsize=12,
-             verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-
-    plt.show()
-
-def model_evaluation(X_train, X_test, results, features):
-    config_parser = configparser.ConfigParser(allow_no_value=True)
-    bindir = os.path.abspath(os.path.dirname(__file__))
-    config_parser.read(bindir + "/cfg.cnf")
-
-    carpeta_datos = config_parser.get("DATOS", "carpeta_datos")
-    carpeta_modelos = config_parser.get("MODELOS", "carpeta_modelos")
-
-    etiv = results['eTIV'].values.tolist()
-
-    X_train = X_train[features]
-    X_test = X_test[features]
-
-    X_train, X_test = standardize_data(X_train, X_test)
-
-    # aplico la eliminación de outliers
-    X_train, X_test = outlier_flattening_2_entries(X_train, X_test)
-
-    # 3.- normalizo los datos OJO LA NORMALIZACION QUE CON Z NORM O CON 0-1 PUEDE VARIAR EL RESULTADO BASTANTE!
-    X_train, X_test = normalize_data_min_max_II(X_train, X_test, (-1, 1))
-
-    file_path = os.path.join(carpeta_modelos, 'ModeloLatest', 'SimpleMLP_nfeats_245_fold_0.pkl')
+    file_path = os.path.join(carpeta_modelos, 'ModeloLatestNoHarmo', 'SimpleMLP_nfeats_245_fold_0.pkl')
     with open(file_path, 'rb') as file:
         regresor = pickle.load(file)
 
@@ -698,7 +264,7 @@ def model_evaluation(X_train, X_test, results, features):
     pred_test_median = pred_test_median_all
 
     # bias correction
-    df_bias_correction = pd.read_csv(os.path.join(carpeta_modelos, 'ModeloLatest', 'DataFrame_bias_correction_1.csv'))
+    df_bias_correction = pd.read_csv(os.path.join(carpeta_modelos, 'ModeloLatestNoHarmo', 'DataFrame_bias_correction_1.csv'))
 
     model = LinearRegression()
     model.fit(df_bias_correction[['edades_train']], df_bias_correction['pred_train'])
@@ -710,180 +276,37 @@ def model_evaluation(X_train, X_test, results, features):
     results['pred_Edad_c'] = (pred_test_median - intercept) / slope
     results['BrainPAD'] = results['pred_Edad'] - results['Edad']
     results['BrainPAD_c'] = results['pred_Edad_c'] - results['Edad']
-    results['eTIV'] = etiv
-
-    fig, axes, stats_ = plot_bag_age_side_by_side(results, age_col="Edad",
-                                                   bag_before_col="BrainPAD",
-                                                   bag_after_col="BrainPAD_c",
-                                                   outfile="BAG_before_after.png")
-
-    ancova_results = pg.ancova(data=results, dv='BrainPAD', between='sexo(M=1;F=0)', covar=['eTIV'])
-    print(ancova_results)
 
     return results
-
-def benjamini_hochberg_correction(p_values):
-    n = len(p_values)
-    sorted_p_values = np.array(sorted(p_values))
-    ranks = np.arange(1, n+1)
-
-    # Calculate the cumulative minimum of the adjusted p-values in reverse
-    adjusted_p_values = np.minimum.accumulate((sorted_p_values * n) / ranks)[::-1]
-
-    # Reverse back to original order
-    reverse_indices = np.argsort(p_values)
-    return adjusted_p_values[reverse_indices]
-
-def calculate_metrics(y_true, y_pred):
-    mae = mean_absolute_error(y_true, y_pred)
-    r, _ = pearsonr(y_true, y_pred)
-    r2 = r2_score(y_true, y_pred)
-    return mae, r, r2
 
 config_parser = configparser.ConfigParser(allow_no_value=True)
 bindir = os.path.abspath(os.path.dirname(__file__))
 config_parser.read(bindir + "/cfg.cnf")
 
 carpeta_datos = config_parser.get("DATOS", "carpeta_datos")
+predictionsPyment = config_parser.get("DATOS", "predictions_pyment")
 carpeta_modelos = config_parser.get("MODELOS", "carpeta_modelos")
 
-controles_COVID = pd.read_csv(os.path.join(carpeta_datos, 'datos_controles', 'Controles_harmo_18_94_FF_noEB_2.csv'))
-pac_COVID = pd.read_csv(os.path.join(carpeta_datos, 'datos_controles', 'COVID_I_harmo_18_94_FF_noEB_2.csv'))
-pac_COVID_II = pd.read_csv(os.path.join(carpeta_datos, 'datos_controles', 'COVID_II_harmo_18_94_FF_noEB_2.csv'))
-X_test_OutSample = pd.read_csv(os.path.join(carpeta_datos, 'datos_controles', 'AgeRisk_harmo_18_94_FF_noEB_2.csv'))
-x_test = pd.read_csv(os.path.join(carpeta_datos, 'datos_controles', 'datos_morfo_Harmo_18_94_FF_noEB_2_TEST.csv'))
-x_train = pd.read_csv(os.path.join(carpeta_datos, 'datos_controles', 'datos_morfo_Harmo_18_94_FF_noEB_2_TRAIN.csv'))
+controles_COVID_results = pd.read_csv(os.path.join(carpeta_datos, 'harmonized', 'Harmonized_Controls_results.csv'))
+Harmonized_COVID_results = pd.read_csv(os.path.join(carpeta_datos, 'harmonized', 'Harmonized_COVID_results.csv'))
+pac_COVID_II_results = pd.read_csv(os.path.join(carpeta_datos, 'harmonized', 'Harmonized_Longitudinal_results.csv'))
 
-controles_COVID = controles_COVID[controles_COVID['Escaner'] != 'zarmonitation_1']
-pac_COVID = pac_COVID[pac_COVID['Escaner'] != 'zarmonitation_1']
-pac_COVID_II = pac_COVID_II[pac_COVID_II['Escaner'] != 'zarmonitation_1']
-X_test_OutSample = X_test_OutSample[X_test_OutSample['Escaner'] != 'zarmonitation_1']
-
-controles_COVID = controles_COVID.dropna(how='all')
-pac_COVID = pac_COVID.dropna(how='all')
-pac_COVID_II = pac_COVID_II.dropna(how='all')
-X_test_OutSample = X_test_OutSample.dropna(how='all')
-
-print('Rango edad Controles:')
-print(controles_COVID['Edad'].min())
-print(controles_COVID['Edad'].max())
-
-print('Rango edad Pacientes:')
-print(pac_COVID['Edad'].min())
-print(pac_COVID['Edad'].max())
-
-features = pd.read_csv(os.path.join(carpeta_modelos, 'ModeloLatest', 'df_features_con_CoRR.csv'))
-features = ast.literal_eval(features.iloc[0, 2])
-
-print(features)
-
-# Evaluo test in sample
-test_Age = x_test['Edad'].values
-all_data_test = x_test.copy()
-X_test_results = x_test.iloc[:, 0:8]
-X_test = x_test.iloc[:, 8:]
-
-result_x_test = model_evaluation(x_train, X_test, X_test_results, features)
-figura_edad_y_edad_predicha(result_x_test['Edad'].values, result_x_test['pred_Edad_c'].values)
-
-print('######## Resultado test in sample ##########')
-res = summarize_metrics(result_x_test, y_col="Edad", yhat_col="pred_Edad", sex_col="sexo(M=1;F=0)", B=5000, seed=42)
-print(res)
-
-# Evaluo test out of sample (Age Risk)
-test_Age = X_test_OutSample['Edad'].values
-all_data_test = X_test_OutSample.copy()
-Age_Risk_results = X_test_OutSample.iloc[:, 0:8]
-X_test = X_test_OutSample.iloc[:, 8:]
-
-result_AgeRisk = model_evaluation(x_train, X_test, Age_Risk_results, features)
-figura_edad_y_edad_predicha(result_AgeRisk['Edad'].values, result_AgeRisk['pred_Edad_c'].values)
-
-print('######## Resultado out of sample ##########')
-res = summarize_metrics(result_AgeRisk, y_col="Edad", yhat_col="pred_Edad", sex_col="sexo(M=1;F=0)", B=5000, seed=42)
-print(res.to_string(index=False, max_rows=None, max_cols=None))
-
-# aplico la eliminación de outliers
-controles_COVID_results = controles_COVID.iloc[:, 0:8]
-controles_COVID_results.rename(columns={'sexo': 'sexo(M=1;F=0)'}, inplace=True)
-controles_COVID_results = model_evaluation(x_train, controles_COVID, controles_COVID_results, features)
-figura_edad_y_edad_predicha(controles_COVID_results['Edad'], controles_COVID_results['pred_Edad'])
-
-
-print('######## Resultado Controles COVID ##########')
-res = summarize_metrics(controles_COVID_results, y_col="Edad", yhat_col="pred_Edad", sex_col="sexo(M=1;F=0)", B=5000, seed=42)
-print(res.to_string(index=False, max_rows=None, max_cols=None))
-
-controles_COVID_results.to_csv('controles_COVID_results_morfo.csv', index=False)
-
-# aplico la eliminación de outliers
-pac_COVID_results = pac_COVID.iloc[:, 0:8]
-pac_COVID_results.rename(columns={'sexo': 'sexo(M=1;F=0)'}, inplace=True)
-pac_COVID_results = model_evaluation(x_train, pac_COVID, pac_COVID_results, features)
-figura_edad_y_edad_predicha(pac_COVID_results['Edad'], pac_COVID_results['pred_Edad'])
-
-# fragments = ['ccov56', 'ccov74', 'ccov77', '10_ccov7',
-# 'ccov12', 'ccov22', 'ccov58', 'ccov70', 'ccov49', 'ccov51', 'ccov52', 'ccov13',
-# 'ccov33', 'ccov36', 'ccov47', 'ccov61', 'ccov19', 'ccov68', 'ccov76', '27_ccov1',
-# 'ccov63', 'ccov14', 'ccov57', 'ccov46', 'ccov53', 'ccov18', 'ccov25', 'ccov27',
-# 'ccov6_2', '_1_ccov5']
-#
-# pattern = '|'.join(map(re.escape, fragments))
-# mask = pac_COVID['ID'].astype(str).str.contains(pattern, case=False, na=False)
-# subset = pac_COVID[mask]
-
-# # aplico la eliminación de outliers
-# pac_COVID_results = subset.iloc[:, 0:8]
-# pac_COVID_results.rename(columns={'sexo': 'sexo(M=1;F=0)'}, inplace=True)
-# pac_COVID_results = model_evaluation(x_train, subset, pac_COVID_results, features)
-# figura_edad_y_edad_predicha(pac_COVID_results['Edad'], pac_COVID_results['pred_Edad'])
-
-print('######## Resultado Pacientes COVID ##########')
-res = summarize_metrics(pac_COVID_results, y_col="Edad", yhat_col="pred_Edad", sex_col="sexo(M=1;F=0)", B=5000, seed=42)
-print(res.to_string(index=False, max_rows=None, max_cols=None))
-
-pac_COVID_results.to_csv('pac_COVID_results_morfo.csv', index=False)
-
-# aplico la eliminación de outliers
-pac_COVID_II_results = pac_COVID_II.iloc[:, 0:8]
-pac_COVID_II_results.rename(columns={'sexo': 'sexo(M=1;F=0)'}, inplace=True)
-pac_COVID_II_results = model_evaluation(x_train, pac_COVID_II, pac_COVID_II_results, features)
-figura_edad_y_edad_predicha(pac_COVID_II_results['Edad'], pac_COVID_II_results['pred_Edad'])
-
-pac_COVID_results['ID'] = pac_COVID_results['ID'].str.replace(r'(_ccov6)_2$', r'\1', regex=True)
-pac_COVID_II_results['ID'] = pac_COVID_II_results['ID'].str.replace(r'(_ccov6)_3$', r'\1_2', regex=True)
-
-pares = emparejar_y_delta(pac_COVID_results, pac_COVID_II_results, id_col='ID')
+prediccionesPymentControls = pd.read_csv(os.path.join(predictionsPyment, 'pyment_predictions_Controls.csv'))
+prediccionesPymentCOVID = pd.read_csv(os.path.join(predictionsPyment, 'pyment_predictions_COVID.csv'))
+prediccionesPymentCOV_I = pd.read_csv(os.path.join(predictionsPyment, 'pyment_predictions_COVID_I.csv'))
+prediccionesPymentCOV_II = pd.read_csv(os.path.join(predictionsPyment, 'pyment_predictions_COVID_II.csv'))
 
 # IDs baseline que tienen segunda adquisición
-ids_long = set(pares['ID_t1'])
+ids_long = (pac_COVID_II_results["ID"].astype(str).str.extract(r"^(\d+)").squeeze().dropna().astype(int).tolist())
 
 # Filtra pac_COVID_results in-place (o crea una copia si prefieres)
-pac_COVID_I_results = (pac_COVID_results[pac_COVID_results['ID'].isin(ids_long)].reset_index(drop=True))
+pac_COVID_I_results = (Harmonized_COVID_results[Harmonized_COVID_results['ID'].isin(ids_long)].reset_index(drop=True))
 
 print(pac_COVID_I_results.shape)
 
-print('######## Resultado Pacientes COVID t1 ##########')
-res = summarize_metrics(pac_COVID_I_results, y_col="Edad", yhat_col="pred_Edad", sex_col="sexo(M=1;F=0)", B=5000, seed=42)
-print(res.to_string(index=False, max_rows=None, max_cols=None))
-
-print('######## Resultado Pacientes COVID t2 ##########')
-res = summarize_metrics(pac_COVID_II_results, y_col="Edad", yhat_col="pred_Edad", sex_col="sexo(M=1;F=0)", B=5000, seed=42)
-print(res.to_string(index=False, max_rows=None, max_cols=None))
-
-pac_COVID_II_results.to_csv('pac_COVID_II_results_morfo.csv', index=False)
-
-controles_COVID_results['Group'] = 'Controls'
-pac_COVID_results['Group'] = 'COVID'
-
-prediccionesPymentControls = pd.read_csv('/home/rafa/PycharmProjects/COVID_V2/datos/PrediccionesPyment/pyment_predictions_Controls.csv')
-prediccionesPymentCOVID = pd.read_csv('/home/rafa/PycharmProjects/COVID_V2/datos/PrediccionesPyment/pyment_predictions_COVID.csv')
-prediccionesPymentCOV_I = pd.read_csv('/home/rafa/PycharmProjects/COVID_V2/datos/PrediccionesPyment/pyment_predictions_COVID_I.csv')
-prediccionesPymentCOV_II = pd.read_csv('/home/rafa/PycharmProjects/COVID_V2/datos/PrediccionesPyment/pyment_predictions_COVID_II.csv')
-
 # Apply to all datasets
 controles_COVID_results = update_prededad(controles_COVID_results, prediccionesPymentControls)
-pac_COVID_results = update_prededad(pac_COVID_results, prediccionesPymentCOVID)
+pac_COVID_results = update_prededad(Harmonized_COVID_results, prediccionesPymentCOVID)
 pac_COVID_I_results = update_prededad(pac_COVID_I_results, prediccionesPymentCOV_I)
 pac_COVID_II_results = update_prededad(pac_COVID_II_results, prediccionesPymentCOV_II)
 
@@ -908,7 +331,7 @@ print('^^^^^^^^^^^^^^^^ ARE THE GROUPS COMPARABLE IN AGE AND SEX (YES THEY ARE) 
 print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n')
 # Check Normality for Age in both groups using the Shapiro-Wilk test
 print("Checking Normality of Age Distribution:")
-for group, name in [(controles_COVID_results, "Controls"), (pac_COVID_results, "MigrCR")]:
+for group, name in [(controles_COVID_results, "Controls"), (pac_COVID_results, "COVID")]:
     stat, p_value = stats.kstest(group['Edad'], 'norm', args=(group['Edad'].mean(), group['Edad'].std()))
     print(f"{name} Group - Kolmogorov-Smirnov Test: Stat={stat}, P-value={p_value}")
     if p_value < 0.05:
@@ -937,10 +360,10 @@ print(f"t.test: {f_statistic}, p-value: {p_value}")
 # First, create a contingency table for the 'Sex' column
 # Count the occurrences of each 'Sex' category within each group
 healthy_sex_counts = controles_COVID_results['sexo(M=1;F=0)'].value_counts()
-MigrCR_sex_counts = pac_COVID_results['sexo(M=1;F=0)'].value_counts()
+COVID_sex_counts = pac_COVID_results['sexo(M=1;F=0)'].value_counts()
 
 # Create a DataFrame to represent the contingency table
-contingency_table = pd.DataFrame({'Healthy': healthy_sex_counts, 'MigrCR': MigrCR_sex_counts,})
+contingency_table = pd.DataFrame({'Healthy': healthy_sex_counts, 'COVID': COVID_sex_counts,})
 
 chi2_stat, p_value_sex, dof, expected = stats.chi2_contingency(contingency_table)
 
@@ -955,14 +378,14 @@ else:
 h = controles_COVID_results['sexo(M=1;F=0)'].dropna().astype(int).value_counts().reindex([1,0], fill_value=0)
 p = pac_COVID_results['sexo(M=1;F=0)'].dropna().astype(int).value_counts().reindex([1,0], fill_value=0)
 
-# Build 2×2 table: rows = sex (M, F), cols = groups (Healthy, MigrCR)
+# Build 2×2 table: rows = sex (M, F), cols = groups
 table = np.array([[h[1], p[1]],
                   [h[0], p[0]]], dtype=int)
 
 # Fisher's exact test (two-sided)
 oddsratio, p_fisher = stats.fisher_exact(table, alternative='two-sided')
 print("\nFisher's Exact Test for Sex:")
-print(f"2x2 table (M/F by Healthy/MigrCR):\n{table}")
+print(f"2x2 table (M/F by Healthy/COVID):\n{table}")
 print(f"Odds ratio: {oddsratio:.3f}, P-value: {p_fisher:.4g}")
 if p_fisher < 0.05:
     print("Significant differences in sex distribution between the groups.")
@@ -976,7 +399,7 @@ print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 # Check Normality for Age in both groups using the Shapiro-Wilk test
 print("Checking Normality of Age Distribution:")
-for group, name in [(controles_COVID_results, "Controls"), (pac_COVID_results, "MigrCR")]:
+for group, name in [(controles_COVID_results, "Controls"), (pac_COVID_results, "COVID")]:
     stat, p_value = stats.kstest(group['BrainPAD'], 'norm', args=(group['BrainPAD'].mean(), group['BrainPAD'].std()))
     print(f"{name} Group - Kolmogorov-Smirnov Test: Stat={stat}, P-value={p_value}")
     if p_value < 0.05:
@@ -992,50 +415,21 @@ if p_value < 0.05:
 else:
     print("No significant difference in variances of the age distributions between the groups.\n")
 
-
-print('\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
-print('^^^^^^^^^^^^^^^^^^^^^ MAE r R2 PyBrainAge predictions ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
-print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n')
-
-mae = mean_absolute_error(controles_COVID_results['Edad'], controles_COVID_results['pred_Edad'])
-r, _ = pearsonr(controles_COVID_results['Edad'], controles_COVID_results['pred_Edad'])
-r2 = r2_score(controles_COVID_results['Edad'], controles_COVID_results['pred_Edad'])
-
-print(f"######################## Healthy group ##############################")
-print(f"Mean Absolute Error (MAE): {mae}")
-print(f"Pearson Correlation Coefficient (r): {r}")
-print(f"Coefficient of Determination (R2): {r2}")
-
-mae = mean_absolute_error(pac_COVID_results['Edad'], pac_COVID_results['pred_Edad'])
-r, _ = pearsonr(pac_COVID_results['Edad'], pac_COVID_results['pred_Edad'])
-r2 = r2_score(pac_COVID_results['Edad'], pac_COVID_results['pred_Edad'])
-
-print(f"######################## MigrCR group ##############################")
-print(f"Mean Absolute Error (MAE): {mae}")
-print(f"Pearson Correlation Coefficient (r): {r}")
-print(f"Coefficient of Determination (R2): {r2}")
-
 print('\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
 print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ BRAIN-PAD ANCOVA ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
 print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n')
 
-EN_controls = pd.read_csv('/home/rafa/PycharmProjects/COVID_V2/surface_topology_total_controls.tsv', sep='\t')
-EN_pacients = pd.read_csv('/home/rafa/PycharmProjects/COVID_V2/surface_topology_total_COVID_I.tsv', sep='\t')
-
-controles_COVID_results["euler_number"] = controles_COVID_results["ID"].map(EN_controls.set_index("subject")["euler_total"])
-pac_COVID_results["euler_number"] = pac_COVID_results["ID"].map(EN_pacients.set_index("subject")["euler_total"])
-
-controles_COVID_results["euler_number"] = controles_COVID_results["euler_number"]/2
-pac_COVID_results["euler_number"] = pac_COVID_results["euler_number"]/2
+controles_COVID_results["euler_total"] = controles_COVID_results["euler_total"]/2
+pac_COVID_results["euler_total"] = pac_COVID_results["euler_total"]/2
 
 # pick a reference to compute the scaling — controls is a good choice
-ref = controles_COVID_results["euler_number"].astype(float)
+ref = controles_COVID_results["euler_total"].astype(float)
 
 mu = ref.mean()
 sd = ref.std(ddof=0)  # population sd (matches sklearn's StandardScaler)
 
-controles_COVID_results["euler_number_z"] = (controles_COVID_results["euler_number"] - mu) / sd
-pac_COVID_results["euler_number_z"] = (pac_COVID_results["euler_number"] - mu) / sd
+controles_COVID_results["euler_total_z"] = (controles_COVID_results["euler_total"] - mu) / sd
+pac_COVID_results["euler_total_z"] = (pac_COVID_results["euler_total"] - mu) / sd
 
 controles_COVID_results['eTIV'] = controles_COVID_results['eTIV'] / 1000000
 pac_COVID_results['eTIV'] = pac_COVID_results['eTIV'] / 1000000
@@ -1048,20 +442,22 @@ fig, ax = plot_pred_vs_age_two_groups(
 )
 plt.show()
 
-merged_df = pd.concat([controles_COVID_results, pac_COVID_results], axis=0)
-df = merged_df[['BrainPAD_c', 'BrainPAD', 'sexo(M=1;F=0)', 'Group', 'Edad', 'pred_Edad', 'eTIV', 'euler_number_z']]
-df.columns = ['BrainPAD_c', 'BrainPAD', 'sexo', 'Group', 'Age', 'BrainAge', 'eTIV', 'euler_number_z']
+controles_COVID_results['Group'] = 'Controls'
+pac_COVID_results['Group'] = 'COVID'
 
-df.to_csv('PA_Baseline.scv', index=False)
+merged_df = pd.concat([controles_COVID_results, pac_COVID_results], axis=0)
+df = merged_df[['BrainPAD', 'sexo(M=1;F=0)', 'Group', 'Edad', 'pred_Edad', 'eTIV', 'euler_total_z']]
+df.columns = ['BrainPAD', 'sexo', 'Group', 'Age', 'BrainAge', 'eTIV', 'euler_total_z']
+
+# df.to_csv('PA_Baseline.scv', index=False)
 
 # === 1) Fit the same ANCOVA with statsmodels OLS to retrieve residuals ===
 # BrainPAD ~ Group + covariates
 # (C(Group) forces categorical; remove C() if Group is already 0/1 numeric)
-df['Group'] = df['Group'].replace({'COVID': 'Patients'})
-model = smf.ols('BrainPAD ~ C(Group) + Age + eTIV + sexo + euler_number_z', data=df).fit()
+model = smf.ols('BrainPAD ~ C(Group) + Age + eTIV + sexo + euler_total_z', data=df).fit()
 
 # --- 1) Adjusted group difference (Patients–Controls), CI, p ---
-coef_name = [c for c in model.params.index if c.startswith("C(Group)")][0]  # e.g., "C(Group)[T.MigrCR]"
+coef_name = [c for c in model.params.index if c.startswith("C(Group)")][0]  #
 adj_diff  = model.params[coef_name]
 ci_low, ci_high = model.conf_int().loc[coef_name]
 p_val     = model.pvalues[coef_name]
@@ -1086,7 +482,7 @@ def bootstrap_d_adj(data, n_boot=5000, seed=42):
         samp = data.sample(n=len(data), replace=True, random_state=int(rng.integers(1e9)))
         samp["Group"] = pd.Categorical(samp["Group"], categories=["Controls", "Patients"])
         fit = smf.ols(
-            "BrainPAD ~ C(Group) + Age + eTIV + sexo + euler_number_z",
+            "BrainPAD ~ C(Group) + Age + eTIV + sexo + euler_total_z",
             data=samp
         ).fit()
         coef_b = [c for c in fit.params.index if c.startswith("C(Group")][0]
@@ -1156,19 +552,16 @@ plot_brain_age_vs_age(df)
 
 ######################3
 
-pac_COVID_results['ID'] = pac_COVID_results['ID'].str.replace(r'(_ccov6)_2$', r'\1', regex=True)
-pac_COVID_II_results['ID'] = pac_COVID_II_results['ID'].str.replace(r'(_ccov6)_3$', r'\1_2', regex=True)
-
-pares = emparejar_y_delta(pac_COVID_results, pac_COVID_II_results, id_col='ID')
-
 # IDs baseline que tienen segunda adquisición
-ids_long = set(pares['ID_t1'])
+ids_long = (pac_COVID_II_results["ID"].astype(str).str.extract(r"^(\d+)").squeeze().dropna().astype(int).tolist())
 
 # Filtra pac_COVID_results in-place (o crea una copia si prefieres)
 pac_COVID_results = (pac_COVID_results[pac_COVID_results['ID'].isin(ids_long)].reset_index(drop=True))
 
 t1 = add_base_id(pac_COVID_results).copy()
 t2 = add_base_id(pac_COVID_II_results).copy()
+
+t1['base_id'] = t1['base_id'].astype('Int64').astype(str).str.zfill(3)
 
 # Si hubiera duplicados por sujeto en un mismo timepoint, nos quedamos con uno (aquí el primero)
 t1 = t1.drop_duplicates(subset='base_id', keep='first')
@@ -1188,7 +581,7 @@ for c in num_cols:
     wide[f'{c}_t1'] = pd.to_numeric(wide[f'{c}_t1'], errors='coerce')
     wide[f'{c}_t2'] = pd.to_numeric(wide[f'{c}_t2'], errors='coerce')
 
-wide.to_csv('PA_Longidtudinal.scv', index=False)
+# wide.to_csv('PA_Longidtudinal.scv', index=False)
 
 # --- 2) Scatter Edad vs Brain Age (pred_Edad_c) con líneas por sujeto ---
 plt.figure(figsize=(6,6))
@@ -1222,7 +615,7 @@ plt.show()
 from scipy.stats import ttest_rel, wilcoxon, t
 
 # --- Pairwise-complete data ---
-pairs = wide[['BrainPAD_c_t1', 'BrainPAD_c_t2', 'BrainPAD_t1', 'BrainPAD_t2']].dropna()
+pairs = wide[['BrainPAD_t1', 'BrainPAD_t2']].dropna()
 bp1 = pairs['BrainPAD_t1'].to_numpy()
 bp2 = pairs['BrainPAD_t2'].to_numpy()
 delta = bp2 - bp1
@@ -1281,9 +674,3 @@ raincloud_plot([bp1_clean, bp2_clean], labels=['T1', 'T2'],
                bandwidth='silverman', kde_alpha=0.45, kde_on_top=True, mirror=True, ax=ax)
 plt.tight_layout()
 plt.show()
-
-
-
-
-
-

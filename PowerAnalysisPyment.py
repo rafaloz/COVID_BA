@@ -175,8 +175,8 @@ def mc_power_ancova_from_df(df, delta, n1, n2, *, alpha=0.05,
 
 ##############################################################################################
 
-PA_Baseline = pd.read_csv('/home/rafa/PycharmProjects/COVID_github/DATA/PA_Baseline.csv')
-PA_Longidtudinal = pd.read_csv('/home/rafa/PycharmProjects/COVID_github/DATA/PA_Longidtudinal.csv')
+PA_Baseline = pd.read_csv('/home/rafa/PycharmProjects/COVID_github/DATA/PA_Baseline_pyment.csv')
+PA_Longidtudinal = pd.read_csv('/home/rafa/PycharmProjects/COVID_github/DATA/PA_Longidtudinal_pyment.csv')
 
 cols = ['BrainPAD','Group','Age','sex','eTIV','euler_number_z']
 print("N total:", len(PA_Baseline))

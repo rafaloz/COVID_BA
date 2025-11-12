@@ -144,12 +144,8 @@ def _metrics(df, y_true='Edad', y_pred='pred_Edad'):
     r2 = 1 - ss_res / ss_tot if ss_tot > 0 else np.nan
     return mae, r, r2
 
-def plot_pred_vs_age_two_groups(
-    df_controls, df_patients,
-    x_col='Edad', y_corr_col='pred_Edad_c', y_raw_col='pred_Edad',
-    labels=('Controls', 'Patients'),
-    markers=('o', 'o'),
-    outfile_base=None
+def plot_pred_vs_age_two_groups(df_controls, df_patients, x_col='Edad', y_corr_col='pred_Edad_c', y_raw_col='pred_Edad',
+    labels=('Controls', 'Patients'), markers=('o', 'o'), outfile_base=None
 ):
     # ---- Metrics on UNCORRECTED predictions (pred_Edad) ----
     c_mae, c_r, c_r2 = _metrics(df_controls, y_true=x_col, y_pred=y_raw_col)
@@ -212,44 +208,10 @@ def plot_pred_vs_age_two_groups(
 
     return fig, ax
 
-# --- 1) Emparejar por sujeto (base_id = ccovN) ---
 def add_base_id(df):
     out = df.copy()
-    out['base_id'] = out['ID'].str.extract(r'(ccov\d+)', expand=False)
+    out['base_id'] = np.char.partition(out['ID'].to_numpy(dtype='U', na_value=''), '_')[:, 0]
     return out
-
-def _parse_ids(df, id_col='ID'):
-    out = df.copy()
-    # fecha = primeros 8 dígitos (YYYYMMDD) que aparezcan en el ID
-    out['fecha'] = pd.to_datetime(out[id_col].str.extract(r'(\d{8})')[0],
-                                  format='%Y%m%d', errors='coerce')
-    # base_id = ccov + número (sirve para emparejar adquisiciones del mismo sujeto)
-    out['base_id'] = out[id_col].str.extract(r'(ccov\d+)')[0]
-    # ola = 2/3 si termina en _2/_3; si no, 1 (primera adquisición)
-    ola = out[id_col].str.extract(r'_(\d+)$')[0].astype('float')
-    out['ola'] = ola.fillna(1).astype(int)
-    return out
-
-def emparejar_y_delta(df_base, df_follow, id_col='ID'):
-    b = _parse_ids(df_base, id_col)
-    f = _parse_ids(df_follow, id_col)
-
-    # Nos quedamos con baseline (ola==1) y segunda adquisición (ola==2)
-    b = b[(b['ola'] == 1) & b['base_id'].notna() & b['fecha'].notna()]
-    f = f[(f['ola'] == 2) & f['base_id'].notna() & f['fecha'].notna()]
-
-    # Si hubiese duplicados por sujeto, cogemos la más temprana en cada ola
-    b = b.sort_values('fecha').drop_duplicates('base_id', keep='first')
-    f = f.sort_values('fecha').drop_duplicates('base_id', keep='first')
-
-    # Emparejar por sujeto (base_id) y calcular diferencias
-    pares = (b[['base_id', id_col, 'fecha']]
-             .merge(f[['base_id', id_col, 'fecha']],
-                    on='base_id', suffixes=('_t1', '_t2'), how='inner'))
-
-    pares['delta_dias']  = (pares['fecha_t2'] - pares['fecha_t1']).dt.days
-    pares['delta_anos']  = pares['delta_dias'] / 365.25
-    return pares.sort_values('base_id').reset_index(drop=True)
 
 def figura_edad_y_edad_predicha(edades_test, pred_test):
 
@@ -283,26 +245,7 @@ def figura_edad_y_edad_predicha(edades_test, pred_test):
 
     plt.show()
 
-def model_evaluation(X_train, X_test, results, features):
-    config_parser = configparser.ConfigParser(allow_no_value=True)
-    bindir = os.path.abspath(os.path.dirname(__file__))
-    config_parser.read(bindir + "/cfg.cnf")
-
-    carpeta_datos = config_parser.get("DATOS", "carpeta_datos")
-    carpeta_modelos = config_parser.get("MODELOS", "carpeta_modelos")
-
-    etiv = results['eTIV'].values.tolist()
-
-    X_train = X_train[features]
-    X_test = X_test[features]
-
-    X_train, X_test = standardize_data(X_train, X_test)
-
-    # aplico la eliminación de outliers
-    X_train, X_test = outlier_flattening_2_entries(X_train, X_test)
-
-    # 3.- normalizo los datos OJO LA NORMALIZACION QUE CON Z NORM O CON 0-1 PUEDE VARIAR EL RESULTADO BASTANTE!
-    X_train, X_test = normalize_data_min_max_II(X_train, X_test, (-1, 1))
+def model_evaluation_clean(X_test, results):
 
     file_path = os.path.join(carpeta_modelos, 'ModeloLatestNoHarmo', 'SimpleMLP_nfeats_245_fold_0.pkl')
     with open(file_path, 'rb') as file:
@@ -324,131 +267,63 @@ def model_evaluation(X_train, X_test, results, features):
     results['pred_Edad_c'] = (pred_test_median - intercept) / slope
     results['BrainPAD'] = results['pred_Edad'] - results['Edad']
     results['BrainPAD_c'] = results['pred_Edad_c'] - results['Edad']
-    results['eTIV'] = etiv
-
-    ancova_results = pg.ancova(data=results, dv='BrainPAD', between='sexo(M=1;F=0)', covar=['eTIV'])
-    print(ancova_results)
 
     return results
-
-def benjamini_hochberg_correction(p_values):
-    n = len(p_values)
-    sorted_p_values = np.array(sorted(p_values))
-    ranks = np.arange(1, n+1)
-
-    # Calculate the cumulative minimum of the adjusted p-values in reverse
-    adjusted_p_values = np.minimum.accumulate((sorted_p_values * n) / ranks)[::-1]
-
-    # Reverse back to original order
-    reverse_indices = np.argsort(p_values)
-    return adjusted_p_values[reverse_indices]
-
-def calculate_metrics(y_true, y_pred):
-    mae = mean_absolute_error(y_true, y_pred)
-    r, _ = pearsonr(y_true, y_pred)
-    r2 = r2_score(y_true, y_pred)
-    return mae, r, r2
 
 config_parser = configparser.ConfigParser(allow_no_value=True)
 bindir = os.path.abspath(os.path.dirname(__file__))
 config_parser.read(bindir + "/cfg.cnf")
 
-carpeta_datos = config_parser.get("DATOS", "carpeta_datos")
+carpeta_datos_II = config_parser.get("DATOS", "carpeta_datos_II")
 carpeta_modelos = config_parser.get("MODELOS", "carpeta_modelos")
 
-controles_COVID = pd.read_csv(os.path.join(carpeta_datos, 'datos_controles', 'Controles_COVID.csv'))
-pac_COVID = pd.read_csv(os.path.join(carpeta_datos, 'datos_controles', 'LPI_COVID_I_FastSurfer_V2_data.csv'))
-pac_COVID_II = pd.read_csv(os.path.join(carpeta_datos, 'datos_controles', 'LPI_COVID_II_FastSurfer_V2_data.csv'))
-X_test_OutSample = pd.read_csv(os.path.join(carpeta_datos, 'datos_controles', 'AgeRisk_noHarmo_18_94_FF_noEB_2.csv'))
-x_test = pd.read_csv(os.path.join(carpeta_datos, 'datos_controles', 'datos_morfo_18_94_FF_TEST.csv'))
-x_train = pd.read_csv(os.path.join(carpeta_datos, 'datos_controles', 'datos_morfo_18_94_FF_TRAIN.csv'))
-
-controles_COVID = controles_COVID[controles_COVID['Escaner'] != 'zarmonitation_1']
-pac_COVID = pac_COVID[pac_COVID['Escaner'] != 'zarmonitation_1']
-pac_COVID_II = pac_COVID_II[pac_COVID_II['Escaner'] != 'zarmonitation_1']
-X_test_OutSample = X_test_OutSample[X_test_OutSample['Escaner'] != 'zarmonitation_1']
-
-controles_COVID = controles_COVID.dropna(how='all')
-pac_COVID = pac_COVID.dropna(how='all')
-pac_COVID_II = pac_COVID_II.dropna(how='all')
-X_test_OutSample = X_test_OutSample.dropna(how='all')
-
-print('Rango edad Controles:')
-print(controles_COVID['Edad'].min())
-print(controles_COVID['Edad'].max())
-
-print('Rango edad Pacientes:')
-print(pac_COVID['Edad'].min())
-print(pac_COVID['Edad'].max())
-
-features = pd.read_csv(os.path.join(carpeta_modelos, 'ModeloLatestNoHarmo', 'df_features_con_CoRR.csv'))
-features = ast.literal_eval(features.iloc[0, 2])
-
-print(features)
-
 # Evaluo test in sample
-test_Age = x_test['Edad'].values
-all_data_test = x_test.copy()
-X_test_results = x_test.iloc[:, 0:8]
-X_test = x_test.iloc[:, 8:]
+X_test_results = pd.read_csv(os.path.join(carpeta_datos_II, 'Unharmonized', 'HoldOutTest_results.csv'))
+X_test = pd.read_csv(os.path.join(carpeta_datos_II, 'Unharmonized', 'HoldOut_Test.csv')).values
 
-result_x_test = model_evaluation(x_train, X_test, X_test_results, features)
+result_x_test = model_evaluation_clean(X_test, X_test_results)
 figura_edad_y_edad_predicha(result_x_test['Edad'].values, result_x_test['pred_Edad_c'].values)
 
 print('######## Resultado test in sample ##########')
 res = summarize_metrics(result_x_test, y_col="Edad", yhat_col="pred_Edad", sex_col="sexo(M=1;F=0)", B=5000, seed=42)
 print(res)
 
-# Evaluo test out of sample (Age Risk)
-test_Age = X_test_OutSample['Edad'].values
-all_data_test = X_test_OutSample.copy()
-Age_Risk_results = X_test_OutSample.iloc[:, 0:8]
-X_test = X_test_OutSample.iloc[:, 8:]
-
-result_AgeRisk = model_evaluation(x_train, X_test, Age_Risk_results, features)
+Age_Risk_results = pd.read_csv(os.path.join(carpeta_datos_II, 'Unharmonized', 'AgeRisk_results.csv'))
+Age_Risk_test = pd.read_csv(os.path.join(carpeta_datos_II, 'Unharmonized', 'AgeRisk_OutOfSample_Test.csv')).values
+result_AgeRisk = model_evaluation_clean(Age_Risk_test, Age_Risk_results)
 figura_edad_y_edad_predicha(result_AgeRisk['Edad'].values, result_AgeRisk['pred_Edad_c'].values)
 
 print('######## Resultado out of sample ##########')
 res = summarize_metrics(result_AgeRisk, y_col="Edad", yhat_col="pred_Edad", sex_col="sexo(M=1;F=0)", B=5000, seed=42)
 print(res.to_string(index=False, max_rows=None, max_cols=None))
 
-# aplico la eliminación de outliers
-controles_COVID_results = controles_COVID.iloc[:, 0:8]
-controles_COVID_results.rename(columns={'sexo': 'sexo(M=1;F=0)'}, inplace=True)
-controles_COVID_results = model_evaluation(x_train, controles_COVID, controles_COVID_results, features)
+controles_COVID_results = pd.read_csv(os.path.join(carpeta_datos_II, 'Unharmonized', 'Controls_COVID_results.csv'))
+controles_COVID = pd.read_csv(os.path.join(carpeta_datos_II, 'Unharmonized', 'Controls_COVID.csv')).values
+controles_COVID_results = model_evaluation_clean(controles_COVID, controles_COVID_results)
 figura_edad_y_edad_predicha(controles_COVID_results['Edad'], controles_COVID_results['pred_Edad'])
 
 print('######## Resultado Controles COVID ##########')
 res = summarize_metrics(controles_COVID_results, y_col="Edad", yhat_col="pred_Edad", sex_col="sexo(M=1;F=0)", B=5000, seed=42)
 print(res.to_string(index=False, max_rows=None, max_cols=None))
 
-controles_COVID_results.to_csv('controles_COVID_results_morfo.csv', index=False)
-
 # aplico la eliminación de outliers
-pac_COVID_results = pac_COVID.iloc[:, 0:8]
-pac_COVID_results.rename(columns={'sexo': 'sexo(M=1;F=0)'}, inplace=True)
-pac_COVID_results = model_evaluation(x_train, pac_COVID, pac_COVID_results, features)
+pac_COVID_results = pd.read_csv(os.path.join(carpeta_datos_II, 'Unharmonized', 'COVID_patients_results.csv'))
+pac_COVID = pd.read_csv(os.path.join(carpeta_datos_II, 'Unharmonized', 'COVID_patients.csv')).values
+pac_COVID_results = model_evaluation_clean(pac_COVID, pac_COVID_results)
 figura_edad_y_edad_predicha(pac_COVID_results['Edad'], pac_COVID_results['pred_Edad'])
 
 print('######## Resultado Pacientes COVID ##########')
 res = summarize_metrics(pac_COVID_results, y_col="Edad", yhat_col="pred_Edad", sex_col="sexo(M=1;F=0)", B=5000, seed=42)
 print(res.to_string(index=False, max_rows=None, max_cols=None))
 
-pac_COVID_results.to_csv('pac_COVID_results_morfo.csv', index=False)
-
 # aplico la eliminación de outliers
-pac_COVID_II_results = pac_COVID_II.iloc[:, 0:8]
-pac_COVID_II_results.rename(columns={'sexo': 'sexo(M=1;F=0)'}, inplace=True)
-pac_COVID_II_results = model_evaluation(x_train, pac_COVID_II, pac_COVID_II_results, features)
+pac_COVID_II_results = pd.read_csv(os.path.join(carpeta_datos_II, 'Unharmonized', 'COVID_longitudinal_results.csv'))
+pac_COVID_II = pd.read_csv(os.path.join(carpeta_datos_II, 'Unharmonized', 'COVID_Longitudinal.csv')).values
+pac_COVID_II_results = model_evaluation_clean(pac_COVID_II, pac_COVID_II_results)
 figura_edad_y_edad_predicha(pac_COVID_II_results['Edad'], pac_COVID_II_results['pred_Edad'])
 
-pac_COVID_results['ID'] = pac_COVID_results['ID'].str.replace(r'(_ccov6)_2$', r'\1', regex=True)
-pac_COVID_II_results['ID'] = pac_COVID_II_results['ID'].str.replace(r'(_ccov6)_3$', r'\1_2', regex=True)
-
-pares = emparejar_y_delta(pac_COVID_results, pac_COVID_II_results, id_col='ID')
-
 # IDs baseline que tienen segunda adquisición
-ids_long = set(pares['ID_t1'])
+ids_long = (pac_COVID_II_results["ID"].astype(str).str.extract(r"^(\d+)").squeeze().dropna().astype(int).tolist())
 
 # Filtra pac_COVID_results in-place (o crea una copia si prefieres)
 pac_COVID_results_30 = (pac_COVID_results[pac_COVID_results['ID'].isin(ids_long)].reset_index(drop=True))
@@ -463,8 +338,6 @@ print('######## Resultado Pacientes COVID t2 ##########')
 res = summarize_metrics(pac_COVID_II_results, y_col="Edad", yhat_col="pred_Edad", sex_col="sexo(M=1;F=0)", B=5000, seed=42)
 print(res.to_string(index=False, max_rows=None, max_cols=None))
 
-pac_COVID_II_results.to_csv('pac_COVID_II_results_morfo.csv', index=False)
-
 controles_COVID_results['Group'] = 'Controls'
 pac_COVID_results['Group'] = 'COVID'
 
@@ -473,7 +346,7 @@ print('^^^^^^^^^^^^^^^^ ARE THE GROUPS COMPARABLE IN AGE AND SEX (YES THEY ARE) 
 print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n')
 # Check Normality for Age in both groups using the Shapiro-Wilk test
 print("Checking Normality of Age Distribution:")
-for group, name in [(controles_COVID_results, "Controls"), (pac_COVID_results, "MigrCR")]:
+for group, name in [(controles_COVID_results, "Controls"), (pac_COVID_results, "COVID headache")]:
     stat, p_value = stats.kstest(group['Edad'], 'norm', args=(group['Edad'].mean(), group['Edad'].std()))
     print(f"{name} Group - Kolmogorov-Smirnov Test: Stat={stat}, P-value={p_value}")
     if p_value < 0.05:
@@ -498,10 +371,10 @@ print(f"F-statistic: {f_statistic}, p-value: {p_value}")
 # First, create a contingency table for the 'Sex' column
 # Count the occurrences of each 'Sex' category within each group
 healthy_sex_counts = controles_COVID_results['sexo(M=1;F=0)'].value_counts()
-MigrCR_sex_counts = pac_COVID_results['sexo(M=1;F=0)'].value_counts()
+COVID_sex_counts = pac_COVID_results['sexo(M=1;F=0)'].value_counts()
 
 # Create a DataFrame to represent the contingency table
-contingency_table = pd.DataFrame({'Healthy': healthy_sex_counts, 'MigrCR': MigrCR_sex_counts,})
+contingency_table = pd.DataFrame({'Healthy': healthy_sex_counts, 'COVID': COVID_sex_counts})
 
 chi2_stat, p_value_sex, dof, expected = stats.chi2_contingency(contingency_table)
 
@@ -514,12 +387,12 @@ else:
 
 
 print('\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
-print('^^^^^^^^^^^^^^^^^^^^ ARE THE BrainPAD COMPARABLE (YES THEY ARE) ^^^^^^^^^^^^^^^^^^^^^')
+print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ARE THE BrainPAD COMPARABLE  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
 print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n')
 
 # Check Normality for Age in both groups using the Shapiro-Wilk test
 print("Checking Normality of Age Distribution:")
-for group, name in [(controles_COVID_results, "Controls"), (pac_COVID_results, "MigrCR")]:
+for group, name in [(controles_COVID_results, "Controls"), (pac_COVID_results, "COVID")]:
     stat, p_value = stats.kstest(group['BrainPAD'], 'norm', args=(group['BrainPAD'].mean(), group['BrainPAD'].std()))
     print(f"{name} Group - Kolmogorov-Smirnov Test: Stat={stat}, P-value={p_value}")
     if p_value < 0.05:
@@ -535,50 +408,21 @@ if p_value < 0.05:
 else:
     print("No significant difference in variances of the age distributions between the groups.\n")
 
-
 print('\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
-print('^^^^^^^^^^^^^^^^^^^^^ MAE r R2 PyBrainAge predictions ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
+print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ BRAIN-PAD ANCOVA ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
 print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n')
 
-mae = mean_absolute_error(controles_COVID_results['Edad'], controles_COVID_results['pred_Edad'])
-r, _ = pearsonr(controles_COVID_results['Edad'], controles_COVID_results['pred_Edad'])
-r2 = r2_score(controles_COVID_results['Edad'], controles_COVID_results['pred_Edad'])
-
-print(f"######################## Healthy group ##############################")
-print(f"Mean Absolute Error (MAE): {mae}")
-print(f"Pearson Correlation Coefficient (r): {r}")
-print(f"Coefficient of Determination (R2): {r2}")
-
-mae = mean_absolute_error(pac_COVID_results['Edad'], pac_COVID_results['pred_Edad'])
-r, _ = pearsonr(pac_COVID_results['Edad'], pac_COVID_results['pred_Edad'])
-r2 = r2_score(pac_COVID_results['Edad'], pac_COVID_results['pred_Edad'])
-
-print(f"######################## MigrCR group ##############################")
-print(f"Mean Absolute Error (MAE): {mae}")
-print(f"Pearson Correlation Coefficient (r): {r}")
-print(f"Coefficient of Determination (R2): {r2}")
-
-print('\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
-print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ BRAIN-PAD ANCOVA ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
-print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n')
-
-EN_controls = pd.read_csv('/home/rafa/PycharmProjects/COVID_V2/surface_topology_total_controls.tsv', sep='\t')
-EN_pacients = pd.read_csv('/home/rafa/PycharmProjects/COVID_V2/surface_topology_total_COVID_I.tsv', sep='\t')
-
-controles_COVID_results["euler_number"] = controles_COVID_results["ID"].map(EN_controls.set_index("subject")["euler_total"])
-pac_COVID_results["euler_number"] = pac_COVID_results["ID"].map(EN_pacients.set_index("subject")["euler_total"])
-
-controles_COVID_results["euler_number"] = controles_COVID_results["euler_number"]/2
-pac_COVID_results["euler_number"] = pac_COVID_results["euler_number"]/2
+controles_COVID_results["euler_total"] = controles_COVID_results["euler_total"]/2
+pac_COVID_results["euler_total"] = pac_COVID_results["euler_total"]/2
 
 # pick a reference to compute the scaling — controls is a good choice
-ref = controles_COVID_results["euler_number"].astype(float)
+ref = controles_COVID_results["euler_total"].astype(float)
 
 mu = ref.mean()
 sd = ref.std(ddof=0)  # population sd (matches sklearn's StandardScaler)
 
-controles_COVID_results["euler_number_z"] = (controles_COVID_results["euler_number"] - mu) / sd
-pac_COVID_results["euler_number_z"] = (pac_COVID_results["euler_number"] - mu) / sd
+controles_COVID_results["euler_total_z"] = (controles_COVID_results["euler_total"] - mu) / sd
+pac_COVID_results["euler_total_z"] = (pac_COVID_results["euler_total"] - mu) / sd
 
 controles_COVID_results['eTIV'] = controles_COVID_results['eTIV'] / 1000000
 pac_COVID_results['eTIV'] = pac_COVID_results['eTIV'] / 1000000
@@ -592,18 +436,18 @@ fig, ax = plot_pred_vs_age_two_groups(
 plt.show()
 
 merged_df = pd.concat([controles_COVID_results, pac_COVID_results], axis=0)
-df = merged_df[['BrainPAD_c', 'BrainPAD', 'sexo(M=1;F=0)', 'Group', 'Edad', 'pred_Edad', 'eTIV', 'euler_number_z']]
-df.columns = ['BrainPAD_c', 'BrainPAD', 'sexo', 'Group', 'Age', 'BrainAge', 'eTIV', 'euler_number_z']
+df = merged_df[['BrainPAD_c', 'BrainPAD', 'sexo(M=1;F=0)', 'Group', 'Edad', 'pred_Edad', 'eTIV', 'euler_total_z']]
+df.columns = ['BrainPAD_c', 'BrainPAD', 'sexo', 'Group', 'Age', 'BrainAge', 'eTIV', 'euler_total_z']
 
 df.to_csv('PA_Baseline.scv', index=False)
 
 # === 1) Fit the same ANCOVA with statsmodels OLS to retrieve residuals ===
 # BrainPAD ~ Group + covariates
 # (C(Group) forces categorical; remove C() if Group is already 0/1 numeric)
-model = smf.ols('BrainAge ~ C(Group) + Age + eTIV + sexo + euler_number_z', data=df).fit()
+model = smf.ols('BrainAge ~ C(Group) + Age + eTIV + sexo + euler_total_z', data=df).fit()
 
 # --- 1) Adjusted group difference (Patients–Controls), CI, p ---
-coef_name = [c for c in model.params.index if c.startswith("C(Group)")][0]  # e.g., "C(Group)[T.MigrCR]"
+coef_name = [c for c in model.params.index if c.startswith("C(Group)")][0]
 adj_diff  = model.params[coef_name]
 ci_low, ci_high = model.conf_int().loc[coef_name]
 p_val     = model.pvalues[coef_name]
@@ -628,7 +472,7 @@ def bootstrap_d_adj(data, n_boot=5000, seed=42):
         samp = data.sample(n=len(data), replace=True, random_state=int(rng.integers(1e9)))
         samp["Group"] = pd.Categorical(samp["Group"], categories=["Controls", "COVID"])
         fit = smf.ols(
-            "BrainPAD ~ C(Group, Treatment(reference='Controls')) + eTIV + sexo + Age + euler_number_z",
+            "BrainPAD ~ C(Group, Treatment(reference='Controls')) + eTIV + sexo + Age + euler_total_z",
             data=samp
         ).fit()
         coef_b = [c for c in fit.params.index if c.startswith("C(Group")][0]
@@ -698,13 +542,8 @@ plot_brain_age_vs_age(df)
 
 ######################3
 
-pac_COVID_results['ID'] = pac_COVID_results['ID'].str.replace(r'(_ccov6)_2$', r'\1', regex=True)
-pac_COVID_II_results['ID'] = pac_COVID_II_results['ID'].str.replace(r'(_ccov6)_3$', r'\1_2', regex=True)
-
-pares = emparejar_y_delta(pac_COVID_results, pac_COVID_II_results, id_col='ID')
-
 # IDs baseline que tienen segunda adquisición
-ids_long = set(pares['ID_t1'])
+ids_long = (pac_COVID_II_results["ID"].astype(str).str.extract(r"^(\d+)").squeeze().dropna().astype(int).tolist())
 
 # Filtra pac_COVID_results in-place (o crea una copia si prefieres)
 pac_COVID_results = (pac_COVID_results[pac_COVID_results['ID'].isin(ids_long)].reset_index(drop=True))
@@ -715,6 +554,8 @@ t2 = add_base_id(pac_COVID_II_results).copy()
 # Si hubiera duplicados por sujeto en un mismo timepoint, nos quedamos con uno (aquí el primero)
 t1 = t1.drop_duplicates(subset='base_id', keep='first')
 t2 = t2.drop_duplicates(subset='base_id', keep='first')
+
+t1['base_id'] = t1['base_id'].astype('Int64').astype(str).str.zfill(3)
 
 # Merge ancho (una fila por sujeto)
 wide = t1.merge(
@@ -823,10 +664,3 @@ raincloud_plot([bp1_clean, bp2_clean], labels=['T1', 'T2'],
                bandwidth='silverman', kde_alpha=0.45, kde_on_top=True, mirror=True, ax=ax)
 plt.tight_layout()
 plt.show()
-
-print('pausa')
-
-
-
-
-
