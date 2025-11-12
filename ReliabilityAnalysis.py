@@ -4,7 +4,7 @@ from scipy import stats as st
 import matplotlib.pyplot as plt
 
 # ====== CONFIG ======
-PATH = ("/home/rafa/PycharmProjects/COVID_BA/DATA/PA_Longitudinal.csv")  # <-- fixed extension
+PATH = ("/home/rafa/PycharmProjects/COVID_BA/DATA/PA_Longitudinal.csv")  # PA_Longitudinal_pyment.csv
 ID_CANDIDATES = ["ID_t1"]  # will pick the first that exists
 GROUP_COL = "Group"                         # optional; used to keep only COV
 T1_COL_CANDIDATES = ["BrainPAD_c_t1"]

@@ -4,7 +4,7 @@ import pandas as pd
 # ---------- Paths ----------
 TRAIN_PATH        = '.../datos_morfo_Harmo_18_94_FF_noEB_2_TRAIN.csv'
 AGERISK_PATH      = '.../AgeRisk_noHarmo_18_94_FF_noEB_2.csv'
-CONTROLS_PATH    = '.../Controls_COVID.csv'
+CONTROLS_PATH     = '.../Controls_COVID.csv'
 COVID_I_PATH      = '.../LPI_COVID_I_FastSurfer_V2_data.csv'
 COVID_II_PATH     = '.../LPI_COVID_II_FastSurfer_V2_data.csv'
 
@@ -23,7 +23,7 @@ COMBATGAM_DIR       = '.../work/'
 # ---------- Load ----------
 X_train          = pd.read_csv(TRAIN_PATH)
 X_test_OutSample = pd.read_csv(AGERISK_PATH)
-Controls        = pd.read_csv(CONTROLS_PATH)
+Controls         = pd.read_csv(CONTROLS_PATH)
 COVID_I          = pd.read_csv(COVID_I_PATH)
 COVID_II         = pd.read_csv(COVID_II_PATH)
 

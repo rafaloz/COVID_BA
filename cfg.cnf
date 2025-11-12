@@ -1,5 +1,6 @@
 [DATOS]
-carpeta_datos = /home/rafa/PycharmProjects/COVID_V2/datos
+carpeta_datos = /home/rafa/PycharmProjects/COVID_BA/DATA/preparedFeatures
+predictions_pyment = /home/rafa/PycharmProjects/COVID_BA/DATA/PredctionsPyment
 
 [MODELOS]
 carpeta_modelos = /home/rafa/PycharmProjects/COVID_V2/modelos_no_controles_LPI
