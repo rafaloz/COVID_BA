@@ -453,15 +453,27 @@ def _combat_diagnostics_soft(
         z_thresh=3,
         cv_tol=0.30,
 ):
-    """
-    Diagnósticos 'soft' para ComBat-GAM:
-    ----------------------------------------------------
-    • Imprime los estadísticos de Shapiro (W, p) y KS (D, p)
-      pero la decisión 'problemático / OK' se basa en:
-        – |Z_skew| < z_thresh   y   |Z_kurt| < z_thresh
-        – CV_empírico dentro de ±cv_tol del CV teórico Inv-Gamma
-    • Si se supera alguno de esos umbrales, se lanza warn.
-    """
+	"""
+	Diagnósticos suaves para ComBat-GAM (paramétrico).
+
+	Para cada batch, evalúa de forma heurística si los parámetros estimados
+	cumplen razonablemente las suposiciones del modelo paramétrico de ComBat:
+
+	• γ̂ (efecto de localización):
+	  Se inspecciona la distribución de γ̂ entre features mediante asimetría
+	  y curtosis en exceso. Se considera aceptable si no muestra desviaciones
+	  extremas respecto a una forma aproximadamente normal.
+
+	• δ̂ (efecto de escala):
+	  Se ajusta una Inverse-Gamma por máxima verosimilitud y se comprueba que
+	  el parámetro de forma sea compatible con una varianza finita y estable.
+	  Tests adicionales (KS y comparación de CV empírico vs teórico) se
+	  calculan únicamente con fines informativos.
+
+	La función imprime métricas diagnósticas por batch y lanza un warning si
+	algún batch presenta desviaciones claras, sugiriendo revisar los datos o
+	considerar ComBat no paramétrico. No interrumpe la ejecución.
+	"""
     n_batch  = info_dict["n_batch"]
     problems = []
 
