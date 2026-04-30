@@ -3,3 +3,4 @@ feature_order_harmonized.txt
 feature_order_unharmonized.txt
 __pycache__/
 *.pyc
+.claude/
