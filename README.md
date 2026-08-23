@@ -5,7 +5,7 @@ This repository accompanies “No increased brain age gap in persistent post-COV
 ![Pipeline diagram](diagram.svg)
 
 The **Pyment** brain age model weights and code are available from the repository: [https://github.com/estenhl/pyment-public](https://github.com/estenhl/pyment-public). \
-We included **NeuroHarmonize** (ComBat-GAM) in the repository, since we incldued in it harmonization assumptions checks (https://github.com/rpomponio/neuroHarmonize).
+We included **NeuroHarmonize** (ComBat-GAM) in the repository, since we included in it harmonization assumptions checks (https://github.com/rpomponio/neuroHarmonize).
 
 
 If you found this paper or repository useful, please reference: 
