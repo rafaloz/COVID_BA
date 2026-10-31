@@ -1,0 +1,33 @@
+REPRODUCING PREDICTIONS
+
+Test_COVID_morpho_Harmonized.py uses ModeloLatest and its own calibration.
+Test_COVID_morpho_Unharmonized.py uses ModeloLatestNoHarmo and its calibration.
+Test_COVID_pyment.py uses the supplied raw pyment predictions. It does not
+apply a morphometric model or its age-bias correction to pyment.
+Configure data and saved-model paths in cfg.cnf before running these scripts.
+No training is needed for these evaluation steps.
+
+New output location: analysis_exports/<model>/<UTC timestamp_run id>/.
+Each run/model has its own directory. CSV files are created without
+overwriting earlier exports. manifest.json records model, columns, row
+counts and SHA256 hashes. These generated files are excluded from git.
+Raw predictions are pred_Edad and raw brain age gap is BrainPAD.
+Morphometric outputs may additionally contain pred_Edad_c and BrainPAD_c.
+Pyment outputs omit all such inherited corrected columns.
+Missing predictions and conflicting duplicate prediction IDs raise errors
+instead of silently changing the analysis sample.
+
+The historical project-root *_results_morfo.csv, PA_Baseline.scv and
+PA_Longidtudinal.scv files are not overwritten or treated as new exports.
+Model names cannot be inferred reliably from those old filenames alone.
+The supplied original prediction/data files are retained unchanged.
+
+Clinical results in the JNS working manuscript use a separate entry point:
+COVID_V2/PAPER/JNS/clinical_change_analysis.py, which calls
+clinical_change_redcap_table.py and uses individual baseline frequencies.
+It requires the private clinical source records and the main MLP paired
+results in wide.csv. The historical constant-30-day analysis in
+COVID_V2/Test_COVID_morfo.py has been removed from execution. It must not
+be used to regenerate the manuscript's clinical findings.
+This document describes evaluation/export entry points; it does not imply
+that private clinical records are included in the public repository.

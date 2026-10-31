@@ -1,3 +1,7 @@
+from pathlib import Path
+from prediction_exports import PredictionExporter
+
+model_exports = PredictionExporter("morphometric_harmonized", Path(__file__).resolve().parent / "analysis_exports")
 from utils_Train import *
 import pickle
 import ast
@@ -399,7 +403,7 @@ def figura_edad_y_edad_predicha(edades_test, pred_test):
 
 def model_evaluation_clean(X_test, results):
 
-    file_path = os.path.join(carpeta_modelos, 'ModeloLatestNoHarmo', 'SimpleMLP_nfeats_245_fold_0.pkl')
+    file_path = os.path.join(carpeta_modelos, 'ModeloLatest', 'SimpleMLP_nfeats_245_fold_0.pkl')
     with open(file_path, 'rb') as file:
         regresor = pickle.load(file)
 
@@ -407,7 +411,7 @@ def model_evaluation_clean(X_test, results):
     pred_test_median = pred_test_median_all
 
     # bias correction
-    df_bias_correction = pd.read_csv(os.path.join(carpeta_modelos, 'ModeloLatestNoHarmo', 'DataFrame_bias_correction_1.csv'))
+    df_bias_correction = pd.read_csv(os.path.join(carpeta_modelos, 'ModeloLatest', 'DataFrame_bias_correction_1.csv'))
 
     model = LinearRegression()
     model.fit(df_bias_correction[['edades_train']], df_bias_correction['pred_train'])
@@ -613,7 +617,7 @@ merged_df = pd.concat([controles_COVID_results, pac_COVID_results], axis=0)
 df = merged_df[['BrainPAD_c', 'BrainPAD', 'sexo(M=1;F=0)', 'Group', 'Edad', 'pred_Edad', 'eTIV', 'euler_total_z']]
 df.columns = ['BrainPAD_c', 'BrainPAD', 'sexo', 'Group', 'Age', 'BrainAge', 'eTIV', 'euler_total_z']
 
-# df.to_csv('PA_Baseline.scv', index=False)
+model_exports.write(df, "baseline_ancova.csv")
 
 # === 1) Fit the same ANCOVA with statsmodels OLS to retrieve residuals ===
 # BrainPAD ~ Group + covariates
@@ -745,7 +749,7 @@ for c in num_cols:
     wide[f'{c}_t1'] = pd.to_numeric(wide[f'{c}_t1'], errors='coerce')
     wide[f'{c}_t2'] = pd.to_numeric(wide[f'{c}_t2'], errors='coerce')
 
-# wide.to_csv('PA_Longidtudinal.scv', index=False)
+model_exports.write(wide, "longitudinal_pairs.csv")
 
 # --- 2) Scatter Edad vs Brain Age (pred_Edad_c) con líneas por sujeto ---
 plt.figure(figsize=(6,6))

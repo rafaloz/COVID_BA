@@ -11,3 +11,5 @@ We included **NeuroHarmonize** (ComBat-GAM) in the repository, since we included
 If you found this paper or repository useful, please reference: 
 
 [TO BE UPDATED]
+
+Evaluation entry points and model-specific export conventions are documented in [REPRODUCIBILITY.txt](REPRODUCIBILITY.txt).

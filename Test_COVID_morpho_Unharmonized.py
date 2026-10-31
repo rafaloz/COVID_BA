@@ -1,3 +1,7 @@
+from pathlib import Path
+from prediction_exports import PredictionExporter
+
+model_exports = PredictionExporter("morphometric_unharmonized", Path(__file__).resolve().parent / "analysis_exports")
 from utils_Train import *
 import pickle
 import ast
@@ -439,7 +443,7 @@ merged_df = pd.concat([controles_COVID_results, pac_COVID_results], axis=0)
 df = merged_df[['BrainPAD_c', 'BrainPAD', 'sexo(M=1;F=0)', 'Group', 'Edad', 'pred_Edad', 'eTIV', 'euler_total_z']]
 df.columns = ['BrainPAD_c', 'BrainPAD', 'sexo', 'Group', 'Age', 'BrainAge', 'eTIV', 'euler_total_z']
 
-df.to_csv('PA_Baseline.scv', index=False)
+model_exports.write(df, "baseline_ancova.csv")
 
 # === 1) Fit the same ANCOVA with statsmodels OLS to retrieve residuals ===
 # BrainPAD ~ Group + covariates
@@ -571,7 +575,7 @@ for c in num_cols:
     wide[f'{c}_t1'] = pd.to_numeric(wide[f'{c}_t1'], errors='coerce')
     wide[f'{c}_t2'] = pd.to_numeric(wide[f'{c}_t2'], errors='coerce')
 
-wide.to_csv('PA_Longidtudinal.scv', index=False)
+model_exports.write(wide, "longitudinal_pairs.csv")
 
 # --- 2) Scatter Edad vs Brain Age (pred_Edad_c) con líneas por sujeto ---
 plt.figure(figsize=(6,6))

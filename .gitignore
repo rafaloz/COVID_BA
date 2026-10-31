@@ -4,3 +4,5 @@ feature_order_unharmonized.txt
 __pycache__/
 *.pyc
 .claude/
+
+analysis_exports/

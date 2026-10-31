@@ -1,3 +1,7 @@
+from pathlib import Path
+from prediction_exports import PredictionExporter, update_prededad
+
+model_exports = PredictionExporter("pyment", Path(__file__).resolve().parent / "analysis_exports")
 from utils_Train import *
 import pickle
 import ast
@@ -31,35 +35,6 @@ except Exception:
     SCIPY = False
 
 # Function to update BrainPAD
-def update_prededad(results_df, predictions_df,
-                    id_col_results='ID', id_col_pred='id',
-                    pred_col='prediction'):
-    r = results_df.copy()
-    p = predictions_df.copy()
-
-    # Normaliza tipos/espacios por si acaso
-    r[id_col_results] = r[id_col_results].astype(str).str.strip()
-    p[id_col_pred]    = p[id_col_pred].astype(str).str.strip()
-
-    if len(p[id_col_pred][0]) == 3 and p[id_col_pred][0][2] == '0':
-        p[id_col_pred] = pd.to_numeric(p[id_col_pred], errors='coerce').dropna().astype('int64').tolist()
-
-    # Si hay IDs duplicados en las predicciones, quédate con el último (o la media)
-    p = p.drop_duplicates(subset=[id_col_pred], keep='last')
-
-    # Crea el mapeo y sustituye
-    pred_map = p.set_index(id_col_pred)[pred_col]
-    r['pred_Edad'] = r[id_col_results].map(pred_map)
-
-    # Recalcula BrainPAD si existe Edad
-    if 'Edad' in r.columns:
-        r['BrainPAD'] = r['pred_Edad'] - r['Edad']
-
-    # (Opcional) chequeo de IDs sin match
-    missing = r[r['pred_Edad'].isna()][id_col_results].unique()
-    print(f'IDs sin predicción: {len(missing)}')
-
-    return r
 
 def raincloud_plot(
     data_list, labels, width=0.35, jitter=0.06, bandwidth='scott',
@@ -254,30 +229,6 @@ def add_base_id(df):
     return out
 
 
-def model_evaluation_clean(X_test, results):
-
-    file_path = os.path.join(carpeta_modelos, 'ModeloLatestNoHarmo', 'SimpleMLP_nfeats_245_fold_0.pkl')
-    with open(file_path, 'rb') as file:
-        regresor = pickle.load(file)
-
-    pred_test_median_all = regresor.predict(X_test)
-    pred_test_median = pred_test_median_all
-
-    # bias correction
-    df_bias_correction = pd.read_csv(os.path.join(carpeta_modelos, 'ModeloLatestNoHarmo', 'DataFrame_bias_correction_1.csv'))
-
-    model = LinearRegression()
-    model.fit(df_bias_correction[['edades_train']], df_bias_correction['pred_train'])
-
-    slope = model.coef_[0]
-    intercept = model.intercept_
-
-    results['pred_Edad'] = pred_test_median
-    results['pred_Edad_c'] = (pred_test_median - intercept) / slope
-    results['BrainPAD'] = results['pred_Edad'] - results['Edad']
-    results['BrainPAD_c'] = results['pred_Edad_c'] - results['Edad']
-
-    return results
 
 config_parser = configparser.ConfigParser(allow_no_value=True)
 bindir = os.path.abspath(os.path.dirname(__file__))
@@ -309,6 +260,12 @@ controles_COVID_results = update_prededad(controles_COVID_results, prediccionesP
 pac_COVID_results = update_prededad(Harmonized_COVID_results, prediccionesPymentCOVID)
 pac_COVID_I_results = update_prededad(pac_COVID_I_results, prediccionesPymentCOV_I)
 pac_COVID_II_results = update_prededad(pac_COVID_II_results, prediccionesPymentCOV_II)
+
+for dataset, frame in [("controls", controles_COVID_results),
+                       ("patients", pac_COVID_results),
+                       ("patients_t1", pac_COVID_I_results),
+                       ("patients_t2", pac_COVID_II_results)]:
+    model_exports.write(frame, dataset + ".csv")
 
 print('######## Resultado Controles COVID ##########')
 res = summarize_metrics(controles_COVID_results, y_col="Edad", yhat_col="pred_Edad", sex_col="sexo(M=1;F=0)", B=5000, seed=42)
@@ -449,7 +406,7 @@ merged_df = pd.concat([controles_COVID_results, pac_COVID_results], axis=0)
 df = merged_df[['BrainPAD', 'sexo(M=1;F=0)', 'Group', 'Edad', 'pred_Edad', 'eTIV', 'euler_total_z']]
 df.columns = ['BrainPAD', 'sexo', 'Group', 'Age', 'BrainAge', 'eTIV', 'euler_total_z']
 
-# df.to_csv('PA_Baseline.scv', index=False)
+model_exports.write(df, "baseline_ancova.csv")
 
 # === 1) Fit the same ANCOVA with statsmodels OLS to retrieve residuals ===
 # BrainPAD ~ Group + covariates
@@ -582,9 +539,9 @@ for c in num_cols:
     wide[f'{c}_t1'] = pd.to_numeric(wide[f'{c}_t1'], errors='coerce')
     wide[f'{c}_t2'] = pd.to_numeric(wide[f'{c}_t2'], errors='coerce')
 
-# wide.to_csv('PA_Longidtudinal.scv', index=False)
+model_exports.write(wide, "longitudinal_pairs.csv")
 
-# --- 2) Scatter Edad vs Brain Age (pred_Edad_c) con líneas por sujeto ---
+# --- 2) Raw pyment predicted ages with paired trajectories ---
 plt.figure(figsize=(6,6))
 
 # Líneas por sujeto (dirección del cambio)
