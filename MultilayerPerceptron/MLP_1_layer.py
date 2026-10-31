@@ -1,5 +1,6 @@
 import torch
 import random
+from copy import deepcopy
 
 from typing import Sequence, Union, List
 
@@ -119,7 +120,7 @@ class PerceptronFunnel(nn.Module):
 
 
 class Perceptron():
-    def __init__(self, epochs=1800):
+    def __init__(self, epochs=100):
         self.model = None
         self.epochs = epochs
         self.epoch = 0
@@ -143,6 +144,7 @@ class Perceptron():
                 model.init_params()
             self.model = model
 
+        model = self.model
         optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
 
@@ -160,6 +162,7 @@ class Perceptron():
 
         best_epoch = 0
         best_mae_val = np.inf
+        best_model_state = None
         val_improve_epoch = 0
         total_updates = 0
 
@@ -221,7 +224,7 @@ class Perceptron():
                 best_mae_val = val_loss_eval
                 best_mae_train_eval = train_loss_eval
                 best_mae_train = running_loss/running_samples
-                best_model = model
+                best_model_state = deepcopy(model.state_dict())
                 best_epoch = epoch
                 val_improve_epoch = epoch
 
@@ -236,6 +239,11 @@ class Perceptron():
 
             # print('model, epoch: {}, mae_train: {:.4f}, mae_val: {:.4f}'.format(epoch, total_train_loss / len(train_loader), mae_val))
 
+        if best_model_state is None:
+            raise RuntimeError("Training did not produce a valid validation checkpoint.")
+        model.load_state_dict(best_model_state)
+        model.eval()
+
         # Plot
         plt.figure(figsize=(10, 6))
         plt.plot(epoch_list, train_loss_list, label='Training Loss', color='blue')
@@ -248,8 +256,8 @@ class Perceptron():
         plt.savefig('training_validation_loss_' + str(fold) + '.svg')
 
         print(
-            f"No improvement in validation in the last {patience} epochs, returning best model (epoch {best_epoch}) with best_mae_val: {best_mae_val:.4f} and mae_train: { best_mae_train:.4f}, mae_train_eval: { best_mae_train_eval:.4f}")
-        return best_model
+            f"Returning best model (epoch {best_epoch}) with best_mae_val: {best_mae_val:.4f} and mae_train: { best_mae_train:.4f}, mae_train_eval: { best_mae_train_eval:.4f}")
+        return model
 
 
     def predict(self, X):
